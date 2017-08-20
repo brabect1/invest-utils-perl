@@ -1,0 +1,7 @@
+select type, sum(amount*unit_price) from xfrs where unit_curr = 'CZK';
+select type, sum(amount*unit_price) from xfrs where type in ('deposit', 'fx', 'dividend') and unit_curr = 'CZK';
+select type, amount, unit_price from xfrs where unit_curr = 'CZK';
+select type, comm_price from xfrs where comm_curr = 'CZK';
+select type, source_price from xfrs where type='fx' and source_curr='CZK';
+select type, amount, source_curr from xfrs where type='buy' and source_curr='BMW';
+
