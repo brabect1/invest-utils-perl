@@ -33,10 +33,6 @@ my $rv;
 #
 #}
 #@currencies = List::MoreUtils::uniq(@currencies);
-my @currencies = xfrs::getSymbols( $dbh );
-
-@currencies = xfrs::getStocks($dbh);
-@currencies = xfrs::getCurrencies($dbh);
 
 #foreach my $c (@currencies) {
 #    print "$c\n";
@@ -116,16 +112,86 @@ my @currencies = xfrs::getSymbols( $dbh );
 #    }
 #}
 my %ballance;
+my %nav;
 
-foreach my $s (@currencies) {
+# Get ballance
+# ------------
+%ballance = ();
+%nav = ();
+my @symbols = xfrs::getSymbols( $dbh );
+
+foreach my $s (@symbols) {
     $ballance{$s} = 0;
+    $nav{$s} = 0;
 #print "$s\n";
 }
 
 xfrs::getBallance( $dbh, \%ballance );
-foreach my $s (keys %ballance) {
-    print "$s = $ballance{$s}\n";
+xfrs::getNAV( $dbh, \%nav );
+
+# Report cash ballance
+# --------------------
+print "# Currencies\n";
+my @currencies = xfrs::getCurrencies($dbh);
+foreach my $s (@currencies) {
+    print "\t$s = $ballance{$s}\n";
 }
+
+
+# Report stock ballance
+# ---------------------
+print "# Stocks (in units)\n";
+my @stocks = xfrs::getStocks($dbh);
+foreach my $s (@stocks) {
+    print "\t$s = $ballance{$s} ($nav{$s})\n";
+}
+
+# Report total NAV per currency
+# -----------------------------
+my %totals;
+
+# initialize with cash ballance
+foreach my $s (@currencies) {
+    $totals{$s} = $ballance{$s};
+}
+
+# add NAV of all stocks
+foreach my $s (@stocks) {
+    if ($nav{$s} =~ /(\d+(\.\d*)?)([A-Z]+)/) {
+        if (!exists $totals{$3}) {
+            $totals{$3} = $1;
+        } else {
+            $totals{$3} += $1;
+        }
+    }
+}
+
+# report
+print "# Total NAV\n";
+foreach my $s (keys %totals) {
+    print "\t$s = $totals{$s}\n";
+}
+
+# Report total of totals NAV (in a base currency)
+# -----------------------------------------------
+my $total = 0;
+my $base = 'CZK';
+print "# Total NAV ($base)\n";
+my $q = Finance::Quote->new;
+foreach my $s (keys %totals) {
+    if ($s eq $base) {
+        $total += $totals{$s};
+    } else {
+        # query the conversion rate
+        my $rate = $q->currency($s,$base);
+        if ($rate) {
+            $total += $totals{$s} * $rate;
+        } else {
+            print "Error: Failed to obtain conversion rate $s to $base!\n";
+        }
+    }
+}
+print "\t$base = $total\n";
 
 $dbh->disconnect();
 

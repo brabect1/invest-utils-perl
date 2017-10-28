@@ -9,7 +9,7 @@ sudo apt-get install libwww-perl build-essential
 #sudo cpan install Package::Stash
 #sudo cpan install DateTime
 sudo cpan install Finance:Quote
-sudo cpan Fiannce::Math::IRR
+sudo cpan Finance::Math::IRR
 export PERL5LIB=$PERL5LIB:/home/mint/perl5/lib/perl5
 touch ~/.vimrc
 echo "filetype plugin indent on" >> ~/.vimrc
