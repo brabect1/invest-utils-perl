@@ -321,13 +321,13 @@ sub getDividend {
     }
 
     foreach my $s (@syms) {
-        my $dividednd = 0;
+        my $dividend = 0;
         my $stmt; # SQL statement
         my $sth; # compiled SQL statement handle
         my $rv; # SQL execution return value
 
         # get amounts that directly increase or decrease the ballance
-        $stmt = qq(select amount*unit_price - comm_price from xfrs where type='dividend' and Unit_curr = );
+        $stmt = qq(select amount*unit_price - comm_price from xfrs where type='dividend' and source_curr = );
         $stmt = $stmt."'$s';";
         $sth = $dbh->prepare( $stmt );
         $rv = $sth->execute();
@@ -337,7 +337,7 @@ sub getDividend {
             while (my @row = $sth->fetchrow_array()) {
                 if (scalar(@row) < 1) { next; }
                 if (!defined $row[0]) { next; }
-                $dividend += $row[1]; }
+                $dividend += $row[0];
             }
         }
 
@@ -438,12 +438,12 @@ sub getInvestedAmount {
                     }
                     case ['buy'] {
                         # add a new record into the transactions list
-                        push(@trans, (
+                        push(@trans, {
                                 'units' => $row[1],
                                 'price' => $row[2],
                                 'curr' => $row[3],
                                 'comm' => $row[4]
-                            )
+                            }
                         );
                     }
                     else { print "\nError: Unknown transaction type: $row[0]\n"; }
