@@ -6,6 +6,18 @@ use List::MoreUtils;
 use Array::Utils;
 use Finance::Quote;
 
+## #---->>>> 31-Oct-2017
+## real gain = sold units sell price - sold units buy price - sell commision - sold units buy commision
+## invested amount = unsold units price + unsold units commision
+## 
+## total invested amount = 
+## = total buy commision + total sell commision + all units buy price =
+## = (sold units buy commision + unsold units buy commision) + sell commision + (sold units buy price + unsold units buy price) =
+## = (unsold units buy price + unsold units commision) + (sold units buy price + sell commision + sold units buy commision) =
+## = invested amount + (sold units sell price - real gain)
+## 
+## --> implement getRealGain() and getTotalInvestedAmount() --> getTotalSellPrice can be computed from the other values
+## #<<<<----
 
 package xfrs;
 
@@ -364,7 +376,7 @@ sub getDividend {
 #
 # arguments:
 #   - reference to the open DB connection
-#   - reference to a hash array to be filled with dividend records
+#   - reference to a hash array to be filled with investment price records
 sub getInvestedAmount {
     my $dbh = shift || return;
     my $href = shift || return;
@@ -455,6 +467,154 @@ sub getInvestedAmount {
             foreach my $rb (@trans) {
                 $ballance += $rb->{'units'} * $rb->{'price'} + ($rb->{'units'} > 0 ? 1 : 0) * $rb->{'comm'};
             } 
+        }
+
+        $href->{$s} = $ballance;
+    }
+}
+
+
+# Gets the total price for the investment.
+#
+# The total invested amount consists of the price paid for all units bought and
+# commisions paid for all buy and sell transactions. This total amount can be
+# used as a basis to compute the percentage of realized/unrealized gain.
+#
+# arguments:
+#   - reference to the open DB connection
+#   - reference to a hash array to be filled with invetment price records
+sub getTotalInvestedAmount {
+    my $dbh = shift || return;
+    my $href = shift || return;
+
+
+    my @syms = keys %$href;
+    if (scalar(@syms) == 0) {
+        @syms = getSymbols($dbh);
+    }
+
+    foreach my $s (@syms) {
+        my $ballance = 0;
+        my $stmt; # SQL statement
+        my $sth; # compiled SQL statement handle
+        my $rv; # SQL execution return value
+
+        # get amounts that directly increase or decrease the ballance
+        $stmt = qq(select type, amount, unit_price, unit_curr, comm_price, comm_curr, date from xfrs where type in ('buy','sell'));
+        $stmt = $stmt." and source_curr='$s'";
+        $stmt = $stmt." order by date;";
+        $sth = $dbh->prepare( $stmt );
+        $rv = $sth->execute();
+        if($rv < 0){
+            print $DBI::errstr;
+        } else {
+            my $curr = '';
+
+            # process the transactions fetched from DB
+            while (my @row = $sth->fetchrow_array()) {
+                if (scalar(@row) < 6) { next; }
+                if (!defined $row[0] || length $row[0] == 0) { next; }
+
+                # set the currence based on the 1st transaction record
+                if ($curr eq '') { $curr = $row[3]; }
+
+                # skip the record if wrong unit currency
+                if ($curr ne $row[3]) {
+                    print "Error: Unexpected unit currency ($row[0] $row[1] $s units on $row[6]): act=$row[3], exp=$curr\n";
+                    next;
+                }
+
+                # invalidate commision if wrong currency
+                if ($curr ne $row[5]) {
+                    print "Error: Unexpected commision currency ($row[0] $row[1] $s units on $row[6]): act=$row[5], exp=$curr\n";
+                    $row[4] = 0;
+                }
+
+                # act per the transaction type
+                switch ($row[0]) {
+                    case ['sell'] {
+                        # For a sell transactions count only the commision.
+                        $ballance += $row[4];
+                    }
+                    case ['buy'] {
+                        # For a buy transaction count the buy price plus the commision.
+                        $ballance += $row[1]*$row[2] + $row[4];
+                    }
+                    else { print "\nError: Unknown transaction type: $row[0]\n"; }
+                }
+            }
+        }
+
+        $href->{$s} = $ballance;
+    }
+}
+
+
+# Gets the price earned on all sell transactions.
+#
+# The price does not count commisions paid for the sell transactions. Hence
+# to get a real amount earned on selling, one would need to reduce the total
+# sell price by the amount paid for sell commisions.
+#
+# arguments:
+#   - reference to the open DB connection
+#   - reference to a hash array to be filled with sell price records
+sub getTotalSellPrice {
+    my $dbh = shift || return;
+    my $href = shift || return;
+
+
+    my @syms = keys %$href;
+    if (scalar(@syms) == 0) {
+        @syms = getSymbols($dbh);
+    }
+
+    foreach my $s (@syms) {
+        my $ballance = 0;
+        my $stmt; # SQL statement
+        my $sth; # compiled SQL statement handle
+        my $rv; # SQL execution return value
+
+#***TBD*** The code below could be reduced to a single SQL query: select sum(amount*unit_price) from ... 
+        $stmt = qq(select type, amount, unit_price, unit_curr, comm_price, comm_curr, date from xfrs where type='sell');
+        $stmt = $stmt." and source_curr='$s'";
+        $stmt = $stmt." order by date;";
+        $sth = $dbh->prepare( $stmt );
+        $rv = $sth->execute();
+        if($rv < 0){
+            print $DBI::errstr;
+        } else {
+            my $curr = '';
+
+            # process the transactions fetched from DB
+            while (my @row = $sth->fetchrow_array()) {
+                if (scalar(@row) < 6) { next; }
+                if (!defined $row[0] || length $row[0] == 0) { next; }
+
+                # set the currence based on the 1st transaction record
+                if ($curr eq '') { $curr = $row[3]; }
+
+                # skip the record if wrong unit currency
+                if ($curr ne $row[3]) {
+                    print "Error: Unexpected unit currency ($row[0] $row[1] $s units on $row[6]): act=$row[3], exp=$curr\n";
+                    next;
+                }
+
+                # invalidate commision if wrong currency
+                if ($curr ne $row[5]) {
+                    print "Error: Unexpected commision currency ($row[0] $row[1] $s units on $row[6]): act=$row[5], exp=$curr\n";
+                    $row[4] = 0;
+                }
+
+                # act per the transaction type
+                switch ($row[0]) {
+                    case ['sell'] {
+                        # Take only the sell price and ignore commision.
+                        $ballance += $row[1]*$row[2];
+                    }
+                    else { print "\nError: Unknown transaction type: $row[0]\n"; }
+                }
+            }
         }
 
         $href->{$s} = $ballance;
