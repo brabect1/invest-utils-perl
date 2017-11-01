@@ -92,3 +92,44 @@ foreach my $s (@stocks) {
     }
     print "\n";
 }
+
+# Report totals for stocks of the same currency
+# ---------------------------------------------
+# ***TBD*** This is a temporary solution. Properly, it shall be computed
+#           form the results of DB queries. The reason is that for calculating
+#           IRR we will need all the transactions, not just a "total sum".
+print "# Stocks (total)\n";
+
+my %stocks_total = ();
+foreach my $s (@stocks) {
+    my $curr = $props{$s}->{'curr'};
+    if (!exists($stocks_total{$curr})) {
+        $stocks_total{$curr}->{'sym'} = $curr;
+        $stocks_total{$curr}->{'curr'} = $curr;
+        $stocks_total{$curr}->{'units'} = 'n/a';
+        $stocks_total{$curr}->{'nav'} = 0;
+        $stocks_total{$curr}->{'dividend'} = 0;
+        $stocks_total{$curr}->{'investment'} = 0;
+    }
+    $stocks_total{$curr}->{'nav'} += $props{$s}->{'nav'};
+    $stocks_total{$curr}->{'dividend'} += $props{$s}->{'dividend'};
+    $stocks_total{$curr}->{'investment'} += $props{$s}->{'investment'};
+}
+
+foreach my $c (@cols) {
+    print "\t$c";
+}
+print "\n";
+foreach my $s (keys %stocks_total) {
+    $stocks_total{$s}->{'unreal_gain'} =  $stocks_total{$s}->{'nav'} - $stocks_total{$s}->{'investment'};
+    $stocks_total{$s}->{'total_gain'} =  $stocks_total{$s}->{'unreal_gain'} + $stocks_total{$s}->{'dividend'};
+
+    #***TBD*** This is not correct as the `investment` represents the remaining invested amount.
+    $stocks_total{$s}->{'total_gain_percent'} =  $stocks_total{$s}->{'total_gain'}*100/$stocks_total{$s}->{'investment'};
+
+    foreach my $c (@cols) {
+        print "\t".(exists($stocks_total{$s}->{$c}) ? $stocks_total{$s}->{$c} : "???");
+    }
+    print "\n";
+}
+
