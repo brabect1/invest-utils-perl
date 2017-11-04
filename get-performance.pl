@@ -102,6 +102,11 @@ print "# Stocks (total)\n";
 
 my %stocks_total = ();
 foreach my $s (@stocks) {
+    if (!exists($props{$s}->{'curr'})) {
+        print "Error: Undefined currency for $s!\n";
+        next;
+    }
+
     my $curr = $props{$s}->{'curr'};
     if (!exists($stocks_total{$curr})) {
         $stocks_total{$curr}->{'sym'} = $curr;

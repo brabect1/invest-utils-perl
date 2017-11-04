@@ -36,12 +36,12 @@ sub getSymbols {
         return;
     }
 
-    my @currencies = ();
+    my @syms = ();
     while (my @row = $sth->fetchrow_array()) {
-        push( @currencies, @row);
+        push( @syms, @row);
 
     }
-    return List::MoreUtils::uniq(@currencies);
+    return List::MoreUtils::uniq(@syms);
 }
 
 
@@ -143,12 +143,55 @@ sub getStocks {
         return;
     }
 
-    my @currencies = ();
+    my @syms = ();
     while (my @row = $sth->fetchrow_array()) {
-        push( @currencies, @row);
+        push( @syms, @row);
 
     }
-    return List::MoreUtils::uniq(@currencies);
+    return List::MoreUtils::uniq(@syms);
+}
+
+
+# gets the list of stock symbols in the given currency (or a list of currencies)
+# arguments:
+#   - reference to the open DB connection
+#   - currency symbol (string) or a an a reference to an array of currencies (strings)
+# returns:
+#   - an array of symbols
+sub getStocksInCurrency {
+    my $dbh = shift || return;
+    my $ref = shift || return;
+
+    # prepare a SQL query
+    my $stmt = qq(SELECT distinct source_curr from xfrs where type in ('sell', 'buy', 'dividend'));
+    if (ref($ref) eq '') {
+        $stmt .= " and unit_curr='$ref';";
+    } elsif (ref($ref) eq 'ARRAY') {
+        my $substr = '';
+        for my $s (@$ref) {
+            $substr .= ($substr eq '' ? '' : ', ')."'$s'";
+        }
+        $stmt .= " and unit_curr in ($substr);";
+    } else {
+        print "Error: Unsupported argument type: ".ref($ref)."\n";
+        return;
+    }
+
+    # execute the SQL query
+    my $sth = $dbh->prepare( $stmt );
+    my $rv = $sth->execute();
+    if($rv < 0){
+        print $DBI::errstr;
+        return;
+    }
+
+    # process the results
+    my @syms = ();
+    while (my @row = $sth->fetchrow_array()) {
+        push( @syms, @row);
+
+    }
+    return List::MoreUtils::uniq(@syms);
 }
 
 

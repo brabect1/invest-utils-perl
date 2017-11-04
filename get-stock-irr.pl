@@ -75,6 +75,9 @@ foreach my $s (@stocks) {
                 $amount = -($row[2]*$row[3]) + $row[5];
                 $date = $row[1];
             } elsif ($row[0] eq 'dividend') {
+                # Dividend does not increase the amount invested into the stock
+                # and hence we keep it in a separate "account" and do not put it
+                # into the cashflow. It will be added to the remaining ballance/NAV.
                 $dividend += $row[2]*$row[3];
                 $dividend -= $row[5];
                 next;
