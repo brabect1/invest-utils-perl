@@ -88,31 +88,38 @@ foreach my $s (@stocks) {
     }
 
     # get quote (to compute the actual ballance)
+    $date = localtime->strftime('%Y-%m-%d');
+    $cashflow{$date} = 0;
     if ($units > 0) {
         my $q = Finance::Quote->new;
         $q->timeout(30);
-        my @attrs = ("price","currency");
-        my @exchgs = ("usa", "europe");
-        foreach my $e (@exchgs) {
-            my %qs  = $q->fetch($e,$s);
-            next if (!exists($qs{$s,$attrs[0]}));
-
-            # sanity check: currency match
-            if ($curr ne $qs{$s,$attrs[1]}) {
-                print "\nError: Unexpected currency for $s quote: act $qs{$s,$attrs[1]}, exp $curr\n";
-            }
-
-            $date = localtime->strftime('%Y-%m-%d');
-            $cashflow{$date} = -($qs{$s,$attrs[0]} * $units);
-            last;
+#2017-12-23        my @attrs = ("price","currency");
+#2017-12-23        my @exchgs = ("usa", "europe");
+#2017-12-23        foreach my $e (@exchgs) {
+#2017-12-23            my %qs  = $q->fetch($e,$s);
+#2017-12-23            next if (!exists($qs{$s,$attrs[0]}));
+#2017-12-23
+#2017-12-23            # sanity check: currency match
+#2017-12-23            if ($curr ne $qs{$s,$attrs[1]}) {
+#2017-12-23                print "\nError: Unexpected currency for $s quote: act $qs{$s,$attrs[1]}, exp $curr\n";
+#2017-12-23            }
+#2017-12-23
+#2017-12-23            $date = localtime->strftime('%Y-%m-%d');
+#2017-12-23            $cashflow{$date} = -($qs{$s,$attrs[0]} * $units);
+#2017-12-23            last;
+#2017-12-23        }
+        my @attrs = ("last","currency");
+        my %qs  = $q->alphavantage($s);
+        if (exists($qs{$s,$attrs[0]})) {
+            $cashflow{$date} -= ($qs{$s,$attrs[0]} * $units);
         }
+    }
 
-        # add dividend withdrawal
-        $cashflow{$date} -= $dividend;
+    # add dividend withdrawal
+    $cashflow{$date} -= $dividend;
 
-        foreach my $k (sort keys %cashflow) {
-            print ">>$s,$k,$cashflow{$k}\n";
-        }
+    foreach my $k (sort keys %cashflow) {
+        print ">>$s,$k,$cashflow{$k}\n";
     }
 
     # calculate IRR

@@ -342,15 +342,22 @@ sub getNAV {
             my $nav='';
             my $q = Finance::Quote->new;
             $q->timeout(30);
-            my @attrs = ("price","currency");
-            my @exchgs = ("usa", "europe");
-            foreach my $e (@exchgs) {
-                my %qs  = $q->fetch($e,$s);
-                next if (!exists($qs{$s,$attrs[0]}));
-
+#---->>>> 2017-12-23: Updated to Finance::Quote 1.47
+#2017-12-23            my @attrs = ("price","currency");
+#2017-12-23            my @exchgs = ("usa", "europe");
+#2017-12-23            foreach my $e (@exchgs) {
+#2017-12-23                my %qs  = $q->fetch($e,$s);
+#2017-12-23                next if (!exists($qs{$s,$attrs[0]}));
+#2017-12-23
+#2017-12-23                $nav = ($qs{$s,$attrs[0]} * $href->{$s}).$qs{$s,$attrs[1]};
+#2017-12-23                last;
+#2017-12-23            }
+            my @attrs = ("last","currency");
+            my %qs  = $q->alphavantage($s);
+            if (exists($qs{$s,$attrs[0]})) {
                 $nav = ($qs{$s,$attrs[0]} * $href->{$s}).$qs{$s,$attrs[1]};
-                last;
             }
+#<<<<----
 
             $href->{$s} =  ($nav eq '')  ? $href->{$s}."???" : $nav;
         } else {
@@ -662,6 +669,87 @@ sub getTotalSellPrice {
 
         $href->{$s} = $ballance;
     }
+}
+
+# ***tbd*** get all stock transacrions
+# will return a hash indexed by date and amounts decreasing (sell) and increasing (buy) net asset value
+# each item includes the commisions expense such that the commision increases the value of buy and decreases value of sell
+sub getStockTransactions {
+    my $dbh = shift || return;
+    my @syms = @_;
+
+    for (my $i=0; $i < scalar @syms; $i++) {
+        $syms[$i] = "'".$syms[$i]."'";
+    }
+    
+    my %cashflow = ();
+
+    # get amounts that directly increase or decrease the ballance
+    my $stmt = qq(select type, date, amount, unit_price, unit_curr, comm_price, comm_curr from xfrs where source_curr in );
+    $stmt = $stmt."(".join(',', @syms).") order by date;";
+    my $sth = $dbh->prepare( $stmt );
+    my $rv = $sth->execute();
+    if($rv < 0){
+        print $DBI::errstr;
+    } else {
+        my $curr = ''; # stock currency shall be same for all transactions
+        my $units = 0; # stock units ballance
+        my $date = ''; # date of last buy/sell transaction 
+#        my $dividend = 0; # accumulated dividend
+
+        while (my @row = $sth->fetchrow_array()) {
+            if (scalar(@row) < 2) { next; }
+            if (!defined $row[0] || length $row[0] == 0) { next; }
+
+            if ($curr eq '') {
+                $curr = $row[4];
+            }
+
+            # sanity check: transaction type
+            if ($row[0] ne 'buy' && $row[0] ne 'sell' && $row[0] ne 'dividend') {
+                print "\nError: Unknown transaction type for stock: $row[0]\n";
+                next;
+            }
+
+            # sanity check: source currency
+            if ($row[4] ne $curr) {
+                print "\nError: Unexpected currency for $row[0]: act $row[4], exp $curr\n";
+                next;
+            }
+
+            # sanity check: commisions currency
+            if ($row[6] ne $curr) {
+                print "\nError: Unexpected commision currency for $row[0]: act $row[6], exp $curr\n";
+                next;
+            }
+
+            my $amount = 0;
+
+            if ($row[0] eq 'buy') {
+                $units += $row[2];
+                $amount = $row[2]*$row[3] + $row[5];
+                $date = $row[1];
+            } elsif ($row[0] eq 'sell') {
+                $units -= $row[2];
+                $amount = -($row[2]*$row[3]) + $row[5];
+                $date = $row[1];
+            } elsif ($row[0] eq 'dividend') {
+                # Dividend does not increase the amount invested into the stock
+                # and hence we keep it in a separate "account" and do not put it
+                # into the cashflow. It will be added to the remaining ballance/NAV.
+#                $dividend += $row[2]*$row[3];
+#                $dividend -= $row[5];
+                next;
+            }
+
+            if (!defined $cashflow{$row[1]}) {
+                $cashflow{$row[1]} = 0;
+            }
+            $cashflow{$row[1]} += $amount;
+        }
+    }
+
+    return %cashflow;
 }
 
 1;

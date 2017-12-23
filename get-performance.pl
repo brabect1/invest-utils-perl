@@ -5,6 +5,8 @@ use strict;
 use warnings;
 use List::MoreUtils;
 use xfrs;
+use Finance::Math::IRR;
+use Time::Piece;
 
 my ($opt, $usage) = describe_options(
   '%c %o',
@@ -71,6 +73,11 @@ foreach my $s (@stocks) {
         #***TBD*** This is not correct as the `investment` represents the remaining invested amount.
         $props{$s}->{'total_gain_percent'} =  $props{$s}->{'total_gain'}*100/$props{$s}->{'investment'};
     }
+
+    # compute IRR
+    my %cashflow = xfrs::getStockTransactions($dbh,$s);
+    $cashflow{localtime->strftime('%Y-%m-%d')} = -($props{$s}->{'nav'} + $props{$s}->{'dividend'});
+    $props{$s}->{'irr'} = 100 * xirr(%cashflow, precision => 0.001);
 }
 
 my @cols = (
@@ -80,7 +87,8 @@ my @cols = (
     'nav',
     'dividend',
     'total_gain',
-    'total_gain_percent'
+    'total_gain_percent',
+    'irr'
 );
 foreach my $c (@cols) {
     print "\t$c";
@@ -115,10 +123,12 @@ foreach my $s (@stocks) {
         $stocks_total{$curr}->{'nav'} = 0;
         $stocks_total{$curr}->{'dividend'} = 0;
         $stocks_total{$curr}->{'investment'} = 0;
+        $stocks_total{$curr}->{'symbols'} = '';
     }
     $stocks_total{$curr}->{'nav'} += $props{$s}->{'nav'};
     $stocks_total{$curr}->{'dividend'} += $props{$s}->{'dividend'};
     $stocks_total{$curr}->{'investment'} += $props{$s}->{'investment'};
+    $stocks_total{$curr}->{'symbols'} .= $s.',';
 }
 
 foreach my $c (@cols) {
@@ -131,6 +141,11 @@ foreach my $s (keys %stocks_total) {
 
     #***TBD*** This is not correct as the `investment` represents the remaining invested amount.
     $stocks_total{$s}->{'total_gain_percent'} =  $stocks_total{$s}->{'total_gain'}*100/$stocks_total{$s}->{'investment'};
+
+    # calculate IRR
+    my %cashflow = xfrs::getStockTransactions($dbh,split(',',$stocks_total{$s}->{'symbols'}));
+    $cashflow{localtime->strftime('%Y-%m-%d')} = -($stocks_total{$s}->{'nav'} + $stocks_total{$s}->{'dividend'});
+    $stocks_total{$s}->{'irr'} = 100 * xirr(%cashflow, precision => 0.001);
 
     foreach my $c (@cols) {
         print "\t".(exists($stocks_total{$s}->{$c}) ? $stocks_total{$s}->{$c} : "???");
