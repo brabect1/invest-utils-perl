@@ -443,80 +443,146 @@ sub getInvestedAmount {
         my $sth; # compiled SQL statement handle
         my $rv; # SQL execution return value
 
-        # get amounts that directly increase or decrease the ballance
-        $stmt = qq(select type, amount, unit_price, unit_curr, comm_price, comm_curr, date from xfrs where type in ('buy','sell'));
-        $stmt = $stmt." and source_curr='$s'";
-        $stmt = $stmt." order by date;";
-        $sth = $dbh->prepare( $stmt );
-        $rv = $sth->execute();
-        if($rv < 0){
-            print $DBI::errstr;
-        } else {
-            my $curr = '';
-            my @trans;
+        if (isStock($dbh,$s)) {
+            # get amounts that directly increase or decrease the ballance
+            $stmt = qq(select type, amount, unit_price, unit_curr, comm_price, comm_curr, date from xfrs where type in ('buy','sell'));
+            $stmt = $stmt." and source_curr='$s'";
+            $stmt = $stmt." order by date;";
+            $sth = $dbh->prepare( $stmt );
+            $rv = $sth->execute();
+            if($rv < 0){
+                print $DBI::errstr;
+            } else {
+                my $curr = '';
+                my @trans;
 
-            # process the transactions fetched from DB
-            while (my @row = $sth->fetchrow_array()) {
-                if (scalar(@row) < 6) { next; }
-                if (!defined $row[0] || length $row[0] == 0) { next; }
+                # process the transactions fetched from DB
+                while (my @row = $sth->fetchrow_array()) {
+                    if (scalar(@row) < 6) { next; }
+                    if (!defined $row[0] || length $row[0] == 0) { next; }
 
-                # set the currence based on the 1st transaction record
-                if ($curr eq '') { $curr = $row[3]; }
+                    # set the currence based on the 1st transaction record
+                    if ($curr eq '') { $curr = $row[3]; }
 
-                # skip the record if wrong unit currency
-                if ($curr ne $row[3]) {
-                    print "Error: Unexpected unit currency ($row[0] $row[1] $s units on $row[6]): act=$row[3], exp=$curr\n";
-                    next;
-                }
+                    # skip the record if wrong unit currency
+                    if ($curr ne $row[3]) {
+                        print "Error: Unexpected unit currency ($row[0] $row[1] $s units on $row[6]): act=$row[3], exp=$curr\n";
+                        next;
+                    }
 
-                # invalidate commision if wrong currency
-                if ($curr ne $row[5]) {
-                    print "Error: Unexpected commision currency ($row[0] $row[1] $s units on $row[6]): act=$row[5], exp=$curr\n";
-                    $row[4] = 0;
-                }
+                    # invalidate commision if wrong currency
+                    if ($curr ne $row[5]) {
+                        print "Error: Unexpected commision currency ($row[0] $row[1] $s units on $row[6]): act=$row[5], exp=$curr\n";
+                        $row[4] = 0;
+                    }
 
-                # act per the transaction type
-                switch ($row[0]) {
-                    case ['sell'] {
-                        my $units = -$row[1];
-                        foreach my $rb (@trans) {
-                            $units += $rb->{'units'};
+                    # act per the transaction type
+                    switch ($row[0]) {
+                        case ['sell'] {
+                            my $units = -$row[1];
+                            foreach my $rb (@trans) {
+                                $units += $rb->{'units'};
 
-                            # clear all the bought units if sold more
-                            # than in the buy `rb` transaction, else
-                            # update with what remained
+                                # clear all the bought units if sold more
+                                # than in the buy `rb` transaction, else
+                                # update with what remained
+                                if ($units < 0) {
+                                    $rb->{'units'} = 0;
+                                } else {
+                                    $rb->{'units'} = $units;
+                                    last;
+                                }
+                            }
+
+                            # sanity check:
                             if ($units < 0) {
-                                $rb->{'units'} = 0;
-                            } else {
-                                $rb->{'units'} = $units;
-                                last;
+                                print "Error: Selling more than bought ($row[0] $row[1] $s units on $row[6]): num=".-$units."\n";
                             }
                         }
+                        case ['buy'] {
+                            # add a new record into the transactions list
+                            push(@trans, {
+                                    'units' => $row[1],
+                                    'price' => $row[2],
+                                    'curr' => $row[3],
+                                    'comm' => $row[4]
+                                }
+                            );
+                        }
+                        else { print "\nError: Unknown transaction type: $row[0]\n"; }
+                    }
+                }
 
-                        # sanity check:
-                        if ($units < 0) {
-                            print "Error: Selling more than bought ($row[0] $row[1] $s units on $row[6]): num=".-$units."\n";
+                # compute the invested value based on what has been left from
+                # buy transactions
+                foreach my $rb (@trans) {
+                    $ballance += $rb->{'units'} * $rb->{'price'} + ($rb->{'units'} > 0 ? 1 : 0) * $rb->{'comm'};
+                } 
+            }
+        } elsif (isCurrency($dbh,$s)) {
+            # TODO 2017-12-24: This is teporary solution that only counts depositis and withdrawals.
+            #                  We might also consider currency translations, but that would depend
+            #                  on how the 'invested amount' is supposed to be used. If we care about
+            #                  how much money we put into the account and how much we took back, then
+            #                  the current approach is correct. If we were after efficiency of inbestments
+            #                  in individual currencies (incl. both stock and cash), then we would
+            #                  need to consider translations too.
+            #
+            #                  Also if deposits and withdrwals were in different currencise, we would
+            #                  likely need to convert into a base currency to the date of the transaction,
+            #                  as translating only the final ballance would not correctly represent the
+            #                  asset value of the investment.
+
+            # get amounts that directly increase or decrease the ballance
+            $stmt = qq(select type, amount, unit_price, unit_curr, comm_price, comm_curr, date from xfrs where type in ('deposit','withdraw'));
+            $stmt = $stmt." and source_curr='$s'";
+            $stmt = $stmt." order by date;";
+            $sth = $dbh->prepare( $stmt );
+            $rv = $sth->execute();
+            if($rv < 0){
+                print $DBI::errstr;
+            } else {
+                my $curr = $s;
+                my @trans;
+
+                # process the transactions fetched from DB
+                while (my @row = $sth->fetchrow_array()) {
+                    if (scalar(@row) < 6) { next; }
+                    if (!defined $row[0] || length $row[0] == 0) { next; }
+
+                    # skip the record if wrong unit currency
+                    if ($curr ne $row[3]) {
+                        print "Error: Unexpected unit currency ($row[0] $row[1] $s units on $row[6]): act=$row[3], exp=$curr\n";
+                        next;
+                    }
+
+                    # invalidate commision if wrong currency
+                    if ($curr ne $row[5]) {
+                        print "Error: Unexpected commision currency ($row[0] $row[1] $s units on $row[6]): act=$row[5], exp=$curr\n";
+                        $row[4] = 0;
+                    }
+
+                    # act per the transaction type
+                    switch ($row[0]) {
+                        case ['withdraw'] {
+                            # ignore the commision as it would be covered from the remaining ballance and does
+                            # not affect the vaue of the investment
+                            # (Note: If deposits and withdrawals incured any commissions, than there will be
+                            # a residual investment after a withdrawal that would clear the ballance, and that
+                            # residual amount would equal the sum of all related commissions.)
+                            $ballance = -($row[1]*$row[2]);
                         }
+                        case ['deposit'] {
+                            # ignore the commision as it would be covered from the deposited amount
+                            $ballance += $row[1]*$row[2];
+                        }
+                        else { print "\nError: Unknown transaction type: $row[0]\n"; }
                     }
-                    case ['buy'] {
-                        # add a new record into the transactions list
-                        push(@trans, {
-                                'units' => $row[1],
-                                'price' => $row[2],
-                                'curr' => $row[3],
-                                'comm' => $row[4]
-                            }
-                        );
-                    }
-                    else { print "\nError: Unknown transaction type: $row[0]\n"; }
                 }
             }
-
-            # compute the invested value based on what has been left from
-            # buy transactions
-            foreach my $rb (@trans) {
-                $ballance += $rb->{'units'} * $rb->{'price'} + ($rb->{'units'} > 0 ? 1 : 0) * $rb->{'comm'};
-            } 
+        } else {
+            # unknown symbol
+            next;
         }
 
         $href->{$s} = $ballance;
