@@ -408,6 +408,54 @@ sub getDividend {
 }
 
 
+# Gets a list of dividends, either all or those limited to a symbol subset.
+#
+# The return value is a list of records, where each record is a hash array of
+# dividend ptoperties: Symbol, Currency, Amount, Tax, Date. The list is ordered
+# by date.
+#
+sub getDividends {
+    my $dbh = shift || return;
+    my $href = shift;
+
+#    my @syms = keys %$href;
+#    if (scalar(@syms) != 0) {
+#        print "ERROR: Nor supported for now!\n";
+#        return;
+#    }
+
+    my $stmt; # SQL statement
+    my $sth; # compiled SQL statement handle
+    my $rv; # SQL execution return value
+
+    # get amounts that directly increase or decrease the ballance
+    $stmt = qq(select source_curr, unit_curr, amount*unit_price, comm_price, date from xfrs where type='dividend');
+    $stmt .= " order by date;";
+    $sth = $dbh->prepare( $stmt );
+    $rv = $sth->execute();
+    if($rv < 0){
+        print $DBI::errstr;
+        return;
+    } else {
+        my @dividends;
+
+        while (my @row = $sth->fetchrow_array()) {
+            if (scalar(@row) < 5) { next; }
+            my %dividend;
+            $dividend{'symbol'} = $row[0];
+            $dividend{'currency'} = $row[1];
+            $dividend{'amount'} = $row[2];
+            $dividend{'tax'} = $row[3];
+            $dividend{'date'} = $row[4];
+            push(@dividends, \%dividend);
+        }
+
+        return @dividends;
+    }
+}
+
+
+
 # Gets the invested amount for a stock symbol in the given DB.
 #
 # The invested amount is calculated as the investment for all buy transactions
