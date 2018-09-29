@@ -5,6 +5,7 @@ use warnings;
 use List::MoreUtils;
 use Array::Utils;
 use Finance::Quote;
+use POSIX;
 
 ## #---->>>> 31-Oct-2017
 ## real gain = sold units sell price - sold units buy price - sell commision - sold units buy commision
@@ -340,24 +341,10 @@ sub getNAV {
         } elsif (isStock( $dbh, $s )) {
             # get quote (to compute the actual NAV)
             my $nav='';
-            my $q = Finance::Quote->new;
-            $q->timeout(30);
-#---->>>> 2017-12-23: Updated to Finance::Quote 1.47
-#2017-12-23            my @attrs = ("price","currency");
-#2017-12-23            my @exchgs = ("usa", "europe");
-#2017-12-23            foreach my $e (@exchgs) {
-#2017-12-23                my %qs  = $q->fetch($e,$s);
-#2017-12-23                next if (!exists($qs{$s,$attrs[0]}));
-#2017-12-23
-#2017-12-23                $nav = ($qs{$s,$attrs[0]} * $href->{$s}).$qs{$s,$attrs[1]};
-#2017-12-23                last;
-#2017-12-23            }
-            my @attrs = ("last","currency");
-            my %qs  = $q->alphavantage($s);
-            if (exists($qs{$s,$attrs[0]})) {
-                $nav = ($qs{$s,$attrs[0]} * $href->{$s}).$qs{$s,$attrs[1]};
+            my %qs  = getQuoteStock($dbh,'',$s);
+            if (exists($qs{$s})) {
+                $nav = ($qs{$s}->{'price'} * $href->{$s}).$qs{$s}->{'currency'};
             }
-#<<<<----
 
             $href->{$s} =  ($nav eq '')  ? $href->{$s}."???" : $nav;
         } else {
@@ -864,6 +851,234 @@ sub getStockTransactions {
     }
 
     return %cashflow;
+}
+
+
+# Gets the cached quoted price from DB.
+#
+# Returns a hash indexed by a symbol and for each the following attributes:
+# 'price', 'currency' and 'date'.
+#
+# Arguments:
+#   - reference to the open DB connection
+#   - date of the quote (use empty for today)
+#   - list of symbols to quote
+sub getCachedQuote {
+    my $dbh = shift || return;
+    my $date = shift;
+    my @syms = @_;
+
+    # get today's date if none given
+    if ($date eq '') {
+        $date = POSIX::strftime("%Y-%m-%d",localtime);
+    }
+
+    # see if cached quotes exist
+    my $sth = $dbh->prepare( "SELECT name FROM sqlite_master WHERE type='table' AND name='quotes';" );
+    my $rv = $sth->execute();
+    if($rv < 0) {
+        print $DBI::errstr;
+        return ();
+    } else {
+        # see if we got some result
+        my @row = $sth->fetchrow_array();
+        if (scalar @row == 0) {
+            return ();
+        }
+    }
+
+    # get quote for each symbol
+    my %quotes;
+    for my $s (@syms) {
+        my $stmt = "SELECT price, curr from quotes where date='".$date."' AND symbol='".$s."';";
+        my $sth = $dbh->prepare( $stmt );
+        my $rv = $sth->execute();
+        if($rv < 0) {
+            print $DBI::errstr;
+            next;
+        }
+
+        my @row = $sth->fetchrow_array();
+        if (scalar @row > 1) {
+            $quotes{$s} = {
+                'date' => $date,
+                'price' => $row[0],
+                'currency' => $row[1]
+            };
+        }
+    }
+
+    return %quotes;
+}
+
+
+# Gets quote for given stock symbols.
+#
+# Returns a hash indexed by a symbol and for each the following attributes:
+# 'price' and 'currency'.
+#
+# Symbols, for which no quote was obtained, will not be included in the returned
+# hash. Detecting if some symbols failed can be done by comparing the number of
+# symbols in the input list and in keys of the output hash.
+#
+# Quotes are obtained from the following sources (with decreasing priority):
+# - DB cache
+# - Yahoo Finance
+# - AlphaVantage
+#
+# This routine is somewhat strane for the `xfrs` package, which is intended to provide
+# access routines to an XFRS DB. However, the quotes are needed for the `getNAV` routine.
+#
+# Separate routines exist for stocks and currencies as the API to get real-time quotes
+# is different.
+#
+# Arguments:
+#   - reference to the open DB connection
+#   - date of the quote (use empty for today)
+#   - list of symbols to quote
+sub getQuoteStock {
+    my $dbh = shift || return ();
+    my $date = shift;
+    my @syms = @_;
+
+    my %quotes;
+    my @attrs = ("last","currency");
+    my %attrMap = (
+        'last' => 'price',
+        'currency' => 'currency'
+    );
+
+    my $q = Finance::Quote->new;
+    $q->timeout(30);
+
+    # obtain cached quotes
+    my %qtCacheStocks = getCachedQuote($dbh,$date,@syms);
+    foreach my $s (keys %qtCacheStocks) {
+        $quotes{$s} = $qtCacheStocks{$s};
+    }
+
+    # obtain additional quotes (if needed) from
+    # - Yahoo finance
+    # - AlphaVantage
+    foreach my $qtSrc ('yahoo_json', 'alphavantage') {
+        if (scalar @syms > scalar keys %quotes) {
+            my @missed;
+            foreach my $s (@syms) {
+                push(@missed,$s) unless (exists($quotes{$s}));
+            }
+
+            my %qs = $q->fetch($qtSrc,@missed);
+            foreach my $s (@missed) {
+                next unless (exists($qs{$s,'success'}) && $qs{$s,'success'} == 1);
+                foreach my $a (@attrs) {
+                    if (exists($qs{$s,$a})) {
+                        $quotes{$s}->{$attrMap{$a}} = $qs{$s,$a};
+                    }
+                }
+            }
+        }
+    }
+
+    return %quotes;
+}
+
+
+# Gets quote for given currencies to the base one.
+#
+# Returns a hash indexed by a symbol and for each the following attributes:
+# 'price' and 'currency'.
+#
+# Symbols, for which no quote was obtained, will not be included in the returned
+# hash. Detecting if some symbols failed can be done by comparing the number of
+# symbols in the input list and in keys of the output hash.
+#
+# Quotes are obtained from the following sources (with decreasing priority):
+# - DB cache
+# - Yahoo Finance
+# - AlphaVantage
+#
+# This routine is somewhat strane for the `xfrs` package, which is intended to provide
+# access routines to an XFRS DB. However, the quotes are needed for the `getNAV` routine.
+#
+# Separate routines exist for stocks and currencies as the API to get real-time quotes
+# is different.
+#
+# Arguments:
+#   - reference to the open DB connection
+#   - date of the quote (use empty for today)
+#   - list of currency symbols to quote, where the first acts as the base
+#     (example: a list of `EUR`,`USD`,`CAD` will quote `USDEUR` and `CADEUR` pairs)
+sub getQuoteCurrency {
+    my $dbh = shift || return ();
+    my $date = shift;
+    my $base = shift || return ();
+    my @curs = @_;
+
+    my %quotes;
+    my @attrs = ("last","currency");
+    my %attrMap = (
+        'last' => 'price',
+        'currency' => 'currency'
+    );
+
+    my $q = Finance::Quote->new;
+    $q->timeout(30);
+
+    # get cached quotes first
+    my @pairs;
+    foreach my $c (@curs) {
+        push(@pairs,$c.$base);
+    }
+    my %qtCacheCurs = xfrs::getCachedQuote($dbh,'',@pairs);
+    foreach my $c (@curs) {
+        if (exists($qtCacheCurs{$c.$base})) {
+            $quotes{$c} = $qtCacheCurs{$c.$base};
+        }
+    }
+
+    # quote conversion rates at Yahoo Finance (if needed)
+    if (scalar @curs > scalar keys %quotes) {
+        my %syms;
+        foreach my $s (@curs) {
+            $syms{$s}=$s.$base."=X" unless (exists($quotes{$s}));
+        }
+
+        my %qs = $q->fetch("yahoo_json",values %syms);
+        foreach my $s (keys %syms) {
+            next unless (exists($qs{$syms{$s},'success'}) && $qs{$syms{$s},'success'} == 1);
+
+            foreach my $a (@attrs) {
+                if (exists($qs{$syms{$s},$a})) {
+                    $quotes{$s}->{$attrMap{$a}} = $qs{$syms{$s},$a};
+                }
+            }
+        }
+    }
+
+    # quote conversion rates (if needed) using the default API (AlphaVantage as of Finance::Quote 1.47)
+    if (scalar @curs > scalar keys %quotes) {
+        my @syms;
+        foreach my $s (@curs) {
+            push(@syms,$s) unless (exists($quotes{$s}));
+        }
+
+        foreach my $c (@syms) {
+            if ($base eq $c) {
+                $quotes{$c} = {
+                    'price' => 1.0,
+                    'currency' => $c
+                };
+            } else {
+                my $convrate = $q->currency($c,$base);
+                if (! defined $convrate ) { next; }
+                $quotes{$c} = {
+                    'price' => $convrate,
+                    'currency' => $base
+                };
+            }
+        }
+    }
+    return %quotes;
 }
 
 1;

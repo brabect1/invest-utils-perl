@@ -1,3 +1,11 @@
+# Copyright 2018 Tomas Brabec
+#
+# See LICENSE for license details.
+
+# -----------------------------------------------------------------------------
+# Description:
+#   TODO
+# -----------------------------------------------------------------------------
 use DBI;
 use Getopt::Long::Descriptive;
 use Switch;
@@ -11,6 +19,7 @@ use Time::Piece;
 my ($opt, $usage) = describe_options(
   '%c %o',
   [ 'db|d=s',    "Sqlite3 DB file to import into",   { default  => "xfrs.sqlite3.db" } ],
+  [ 'base|b=s',  "base currency",   { default  => "USD" } ],
   [],
   [ 'help|h',       "print usage message and exit", { shortcircuit => 1 } ],
 );
@@ -157,7 +166,10 @@ foreach my $s (sort keys %stocks_total) {
 # Report total for a base currency
 # --------------------------------
 my %base_total = ();
-my $base = 'CZK';
+my $base = 'USD';
+if ($opt->base ne "") {
+    $base = $opt->base;
+} 
 
 $base_total{$base}->{'sym'} = $base;
 $base_total{$base}->{'curr'} = $base;
@@ -207,17 +219,23 @@ foreach my $s (sort @currencies) {
 
 # Query FX conversion rates
 my %fx_rates;
-my $q = Finance::Quote->new;
+#my $q = Finance::Quote->new;
 foreach my $s (sort @currencies) {
     if ($s eq $base) {
         $fx_rates{$s} = 1.0;
     } else {
-        my $rate = $q->currency($s,$base);
-        if ($rate) {
-            $fx_rates{$s} = $rate;
+        my %qs = xfrs::getQuoteCurrency($dbh,'',$base,$s);
+        if (exists($qs{$s})) {
+            $fx_rates{$s} = $qs{$s}->{'price'};
         } else {
             print "Error: Failed to obtain conversion rate $s to $base!\n";
         }
+#        my $rate = $q->currency($s,$base);
+#        if ($rate) {
+#            $fx_rates{$s} = $rate;
+#        } else {
+#            print "Error: Failed to obtain conversion rate $s to $base!\n";
+#        }
     }
 }
 

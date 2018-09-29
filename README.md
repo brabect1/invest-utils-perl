@@ -6,5 +6,6 @@ module. The module and scripts have ad hoc design to yield the desire function.
 More structured approach will be chosen later once getting a good understanding
 of the needed functions.
 
-Requires ALPHAVANTAGE_API_KEY environment variable to be set to quote stock and
-currency prices.
+The `ALPHAVANTAGE_API_KEY` environment variable shall be set to quote stock and
+currency prices through AlphaVantage API. That one is used as a secondary source
+where the primary is Yahoo Finance.

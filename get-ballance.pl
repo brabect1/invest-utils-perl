@@ -1,3 +1,15 @@
+# Copyright 2018 Tomas Brabec
+#
+# See LICENSE for license details.
+
+# -----------------------------------------------------------------------------
+# Description:
+#   Prints the current ballance of a portfolio from DB, separately for each
+#   symbol and as a total net asset value (NAV).
+#
+#   This script is similar to `get-quotes.pl` but groups the data differently
+#   and also computes NAV differently.
+# -----------------------------------------------------------------------------
 use DBI;
 use Getopt::Long::Descriptive;
 use Switch;
@@ -9,6 +21,7 @@ use xfrs;
 my ($opt, $usage) = describe_options(
   '%c %o',
   [ 'db|d=s',    "Sqlite3 DB file to import into",   { default  => "xfrs.sqlite3.db" } ],
+  [ 'base|b=s',  "base currency",   { default  => "" } ],
   [],
   [ 'help|h',       "print usage message and exit", { shortcircuit => 1 } ],
 );
@@ -19,98 +32,6 @@ my $stmt;
 my $sth;
 my $rv;
 
-## get the list of currencies
-#$stmt = qq(SELECT unit_curr, source_curr, comm_curr from xfrs;);
-#$sth = $dbh->prepare( $stmt );
-#$rv = $sth->execute();
-#if($rv < 0){
-#    print $DBI::errstr;
-#}
-#
-#my @currencies = ();
-#while (my @row = $sth->fetchrow_array()) {
-#    push( @currencies, @row);
-#
-#}
-#@currencies = List::MoreUtils::uniq(@currencies);
-
-#foreach my $c (@currencies) {
-#    print "$c\n";
-#
-#    my $ballance = 0;
-#
-#    # get amounts that directly increase or decrease the ballance
-#    $stmt = qq(select type, amount*unit_price from xfrs where Unit_curr = );
-#    $stmt = $stmt."'$c';";
-#    $sth = $dbh->prepare( $stmt );
-#    $rv = $sth->execute();
-#    if($rv < 0){
-#        print $DBI::errstr;
-#    } else {
-#        while (my @row = $sth->fetchrow_array()) {
-#            if (scalar(@row) < 2) { next; }
-#            if (!defined $row[0] || length $row[0] == 0) { next; }
-#            switch ($row[0]) {
-#                case ['deposit','fx','dividend'] { $ballance += $row[1]; }
-#                case ['buy','withdraw'] { $ballance -= $row[1]; }
-#                else { print "\nError: Unknown transaction type: $row[0]\n"; }
-#            }
-#        }
-#        print "\t$ballance\n";
-#    }
-#
-#    # subtract any conversions where this was a source currency
-#    $stmt = qq(select type, source_price from xfrs where type='fx' and source_curr=);
-#    $stmt = $stmt."'$c';";
-#    $sth = $dbh->prepare( $stmt );
-#    $rv = $sth->execute();
-#    if($rv < 0){
-#        print $DBI::errstr;
-#    } else {
-#        while (my @row = $sth->fetchrow_array()) {
-#            if (scalar(@row) < 2) { next; }
-#            if (!defined $row[0] || length $row[0] == 0) { next; }
-#            $ballance -= $row[1];
-#        }
-#        print "\t$ballance\n";
-#    }
-#
-#    # subtract any commissions
-#    $stmt = qq(select type, sum(comm_price) from xfrs where comm_curr = );
-#    $stmt = $stmt."'$c';";
-#    $sth = $dbh->prepare( $stmt );
-#    $rv = $sth->execute();
-#    if($rv < 0){
-#        print $DBI::errstr;
-#    } else {
-#        while (my @row = $sth->fetchrow_array()) {
-#            if (scalar(@row) < 2) { next; }
-#            if (!defined $row[0] || length $row[0] == 0) { next; }
-#            $ballance -= $row[1];
-#        }
-#        print "\t$ballance\n";
-#    }
-#
-#    # add increases/decreases of stock amount
-#    $stmt = qq(select type, amount from xfrs where type in ('sell', 'buy') and source_curr = );
-#    $stmt = $stmt."'$c';";
-#    $sth = $dbh->prepare( $stmt );
-#    $rv = $sth->execute();
-#    if($rv < 0){
-#        print $DBI::errstr;
-#    } else {
-#        while (my @row = $sth->fetchrow_array()) {
-#            if (scalar(@row) < 2) { next; }
-#            if (!defined $row[0] || length $row[0] == 0) { next; }
-#            switch ($row[0]) {
-#                case ['sell'] { $ballance -= $row[1]; }
-#                case ['buy'] { $ballance += $row[1]; }
-#                else { print "\nError: Unknown transaction type: $row[0]\n"; }
-#            }
-#        }
-#        print "\t$ballance\n";
-#    }
-#}
 my %ballance;
 my %nav;
 
@@ -174,24 +95,25 @@ foreach my $s (keys %totals) {
 
 # Report total of totals NAV (in a base currency)
 # -----------------------------------------------
-my $total = 0;
-my $base = 'CZK';
-print "# Total NAV ($base)\n";
-my $q = Finance::Quote->new;
-foreach my $s (keys %totals) {
-    if ($s eq $base) {
-        $total += $totals{$s};
-    } else {
-        # query the conversion rate
-        my $rate = $q->currency($s,$base);
-        if ($rate) {
-            $total += $totals{$s} * $rate;
+if ($opt->base ne "") {
+    my $total = 0;
+    my $base = $opt->base;
+    print "# Total NAV ($base)\n";
+    foreach my $s (keys %totals) {
+        if ($s eq $base) {
+            $total += $totals{$s};
         } else {
-            print "Error: Failed to obtain conversion rate $s to $base!\n";
+            # query the conversion rate
+            my %qs = xfrs::getQuoteCurrency($dbh,'',$base,$s);
+            if (exists($qs{$s})) {
+                $total += $totals{$s} * $qs{$s}->{'price'};
+            } else {
+                print "Error: Failed to obtain conversion rate $s to $base!\n";
+            }
         }
     }
+    print "\t$base = $total\n";
 }
-print "\t$base = $total\n";
 
 $dbh->disconnect();
 
