@@ -8,13 +8,13 @@ use Finance::Quote;
 use POSIX;
 
 ## #---->>>> 31-Oct-2017
-## real gain = sold units sell price - sold units buy price - sell commision - sold units buy commision
-## invested amount = unsold units price + unsold units commision
+## real gain = sold units sell price - sold units buy price - sell commission - sold units buy commission
+## invested amount = unsold units price + unsold units commission
 ## 
 ## total invested amount = 
-## = total buy commision + total sell commision + all units buy price =
-## = (sold units buy commision + unsold units buy commision) + sell commision + (sold units buy price + unsold units buy price) =
-## = (unsold units buy price + unsold units commision) + (sold units buy price + sell commision + sold units buy commision) =
+## = total buy commission + total sell commission + all units buy price =
+## = (sold units buy commission + unsold units buy commission) + sell commission + (sold units buy price + unsold units buy price) =
+## = (unsold units buy price + unsold units commission) + (sold units buy price + sell commission + sold units buy commission) =
 ## = invested amount + (sold units sell price - real gain)
 ## 
 ## DONE --> implement getRealGain() and getTotalInvestedAmount() --> getTotalSellPrice can be computed from the other values
@@ -107,7 +107,7 @@ sub isCurrency {
     $stmt = $stmt." or unit_curr='$s'";
     $stmt = $stmt." or comm_curr='$s')";
     $stmt = $stmt.")";
-    # stock manip records (a currency may act as a unit or commision currency)
+    # stock manip records (a currency may act as a unit or commission currency)
     $stmt = $stmt." or ";
     $stmt = $stmt."(type in ('sell','buy','dividend') and";
     $stmt = $stmt." (unit_curr='$s'";
@@ -156,7 +156,7 @@ sub getStocks {
 # gets the list of stock symbols in the given currency (or a list of currencies)
 # arguments:
 #   - reference to the open DB connection
-#   - currency symbol (string) or a an a reference to an array of currencies (strings)
+#   - currency symbol (string) or a reference to an array of currencies (strings)
 # returns:
 #   - an array of symbols
 sub getStocksInCurrency {
@@ -221,11 +221,11 @@ sub isStock {
 }
 
 
-# gets the current ballance based on the trabsfers stored in the given DB
+# gets the current balance based on the transfers stored in the given DB
 # arguments:
 #   - reference to the open DB connection
-#   - reference to a hash array to be filled with a ballance
-sub getBallance {
+#   - reference to a hash array to be filled with a balance
+sub getBalance {
     my $dbh = shift || return;
     my $href = shift || return;
 
@@ -236,12 +236,12 @@ sub getBallance {
     }
 
     foreach my $s (@syms) {
-        my $ballance = 0;
+        my $balance = 0;
         my $stmt; # SQL statement
         my $sth; # compiled SQL statement handle
         my $rv; # SQL execution return value
 
-        # get amounts that directly increase or decrease the ballance
+        # get amounts that directly increase or decrease the balance
         $stmt = qq(select type, amount*unit_price from xfrs where Unit_curr = );
         $stmt = $stmt."'$s';";
         $sth = $dbh->prepare( $stmt );
@@ -253,8 +253,8 @@ sub getBallance {
                 if (scalar(@row) < 2) { next; }
                 if (!defined $row[0] || length $row[0] == 0) { next; }
                 switch ($row[0]) {
-                    case ['deposit','fx','dividend','sell'] { $ballance += $row[1]; }
-                    case ['buy','withdraw'] { $ballance -= $row[1]; }
+                    case ['deposit','fx','dividend','sell'] { $balance += $row[1]; }
+                    case ['buy','withdraw'] { $balance -= $row[1]; }
                     else { print "\nError: Unknown transaction type: $row[0]\n"; }
                 }
             }
@@ -271,7 +271,7 @@ sub getBallance {
             while (my @row = $sth->fetchrow_array()) {
                 if (scalar(@row) < 2) { next; }
                 if (!defined $row[0] || length $row[0] == 0) { next; }
-                $ballance -= $row[1];
+                $balance -= $row[1];
             }
         }
 
@@ -286,7 +286,7 @@ sub getBallance {
             while (my @row = $sth->fetchrow_array()) {
                 if (scalar(@row) < 2) { next; }
                 if (!defined $row[0] || length $row[0] == 0) { next; }
-                $ballance -= $row[1];
+                $balance -= $row[1];
             }
         }
 
@@ -302,14 +302,14 @@ sub getBallance {
                 if (scalar(@row) < 2) { next; }
                 if (!defined $row[0] || length $row[0] == 0) { next; }
                 switch ($row[0]) {
-                    case ['sell'] { $ballance -= $row[1]; }
-                    case ['buy'] { $ballance += $row[1]; }
+                    case ['sell'] { $balance -= $row[1]; }
+                    case ['buy'] { $balance += $row[1]; }
                     else { print "\nError: Unknown transaction type: $row[0]\n"; }
                 }
             }
         }
 
-        $href->{$s} = $ballance;
+        $href->{$s} = $balance;
     }
 
 }
@@ -319,7 +319,7 @@ sub getBallance {
 #
 # The NAV value is returned with indication of the currency (e.g. 30.25USD).
 #
-# NAV is computed as the number of remaining shares (as returned by getBallance())
+# NAV is computed as the number of remaining shares (as returned by getBalance())
 # times the present share value. As such it represent the actual value of
 # a position.
 #
@@ -333,8 +333,8 @@ sub getNAV {
     my $dbh = shift || return;
     my $href = shift || return;
 
-    # get the ballance first
-    getBallance( $dbh, $href );
+    # get the balance first
+    getBalance( $dbh, $href );
 
     # get the list of symbols
     my @syms = keys %$href;
@@ -362,7 +362,7 @@ sub getNAV {
 }
 
 
-# gets the total dividend (reduced by a witholding tax) for a stock symbol in the given DB
+# gets the total dividend (reduced by a withholding tax) for a stock symbol in the given DB
 # arguments:
 #   - reference to the open DB connection
 #   - reference to a hash array to be filled with dividend records
@@ -382,7 +382,7 @@ sub getDividend {
         my $sth; # compiled SQL statement handle
         my $rv; # SQL execution return value
 
-        # get amounts that directly increase or decrease the ballance
+        # get amounts that directly increase or decrease the balance
         $stmt = qq(select amount*unit_price - comm_price from xfrs where type='dividend' and source_curr = );
         $stmt = $stmt."'$s';";
         $sth = $dbh->prepare( $stmt );
@@ -405,7 +405,7 @@ sub getDividend {
 # Gets a list of dividends, either all or those limited to a symbol subset.
 #
 # The return value is a list of records, where each record is a hash array of
-# dividend ptoperties: Symbol, Currency, Amount, Tax, Date. The list is ordered
+# dividend properties: Symbol, Currency, Amount, Tax, Date. The list is ordered
 # by date.
 #
 sub getDividends {
@@ -422,7 +422,7 @@ sub getDividends {
     my $sth; # compiled SQL statement handle
     my $rv; # SQL execution return value
 
-    # get amounts that directly increase or decrease the ballance
+    # get amounts that directly increase or decrease the balance
     $stmt = qq(select source_curr, unit_curr, amount*unit_price, comm_price, date from xfrs where type='dividend');
     $stmt .= " order by date;";
     $sth = $dbh->prepare( $stmt );
@@ -462,9 +462,9 @@ sub getDividends {
 # the value paid for last, yet unsold stock units.
 #
 # Commissions for transactions of yet unsold stock units increase the investment
-# value. Once all of the units of buy transaction are sold, the commision (for
-# both the buy and sell trasactions) is transfered to reduce the realized gain
-# and hence removed from the remainig invested value.
+# value. Once all of the units of buy transaction are sold, the commission (for
+# both the buy and sell transactions) is transferred to reduce the realized gain
+# and hence removed from the remaining invested value.
 #
 # arguments:
 #   - reference to the open DB connection
@@ -480,13 +480,13 @@ sub getInvestedAmount {
     }
 
     foreach my $s (@syms) {
-        my $ballance = 0;
+        my $balance = 0;
         my $stmt; # SQL statement
         my $sth; # compiled SQL statement handle
         my $rv; # SQL execution return value
 
         if (isStock($dbh,$s)) {
-            # get amounts that directly increase or decrease the ballance
+            # get amounts that directly increase or decrease the balance
             $stmt = qq(select type, amount, unit_price, unit_curr, comm_price, comm_curr, date from xfrs where type in ('buy','sell'));
             $stmt = $stmt." and source_curr='$s'";
             $stmt = $stmt." order by date;";
@@ -503,7 +503,7 @@ sub getInvestedAmount {
                     if (scalar(@row) < 6) { next; }
                     if (!defined $row[0] || length $row[0] == 0) { next; }
 
-                    # set the currence based on the 1st transaction record
+                    # set the currency based on the 1st transaction record
                     if ($curr eq '') { $curr = $row[3]; }
 
                     # skip the record if wrong unit currency
@@ -512,7 +512,7 @@ sub getInvestedAmount {
                         next;
                     }
 
-                    # invalidate commision if wrong currency
+                    # invalidate commission if wrong currency
                     if ($curr ne $row[5]) {
                         print "Error: Unexpected commision currency ($row[0] $row[1] $s units on $row[6]): act=$row[5], exp=$curr\n";
                         $row[4] = 0;
@@ -558,24 +558,24 @@ sub getInvestedAmount {
                 # compute the invested value based on what has been left from
                 # buy transactions
                 foreach my $rb (@trans) {
-                    $ballance += $rb->{'units'} * $rb->{'price'} + ($rb->{'units'} > 0 ? 1 : 0) * $rb->{'comm'};
+                    $balance += $rb->{'units'} * $rb->{'price'} + ($rb->{'units'} > 0 ? 1 : 0) * $rb->{'comm'};
                 } 
             }
         } elsif (isCurrency($dbh,$s)) {
-            # TODO 2017-12-24: This is teporary solution that only counts depositis and withdrawals.
+            # TODO 2017-12-24: This is temporary solution that only counts deposits and withdrawals.
             #                  We might also consider currency translations, but that would depend
             #                  on how the 'invested amount' is supposed to be used. If we care about
             #                  how much money we put into the account and how much we took back, then
-            #                  the current approach is correct. If we were after efficiency of inbestments
+            #                  the current approach is correct. If we were after efficiency of investments
             #                  in individual currencies (incl. both stock and cash), then we would
             #                  need to consider translations too.
             #
-            #                  Also if deposits and withdrwals were in different currencise, we would
+            #                  Also if deposits and withdrawals were in different currencies, we would
             #                  likely need to convert into a base currency to the date of the transaction,
-            #                  as translating only the final ballance would not correctly represent the
+            #                  as translating only the final balance would not correctly represent the
             #                  asset value of the investment.
 
-            # get amounts that directly increase or decrease the ballance
+            # get amounts that directly increase or decrease the balance
             $stmt = qq(select type, amount, unit_price, unit_curr, comm_price, comm_curr, date from xfrs where type in ('deposit','withdraw'));
             $stmt = $stmt." and source_curr='$s'";
             $stmt = $stmt." order by date;";
@@ -598,7 +598,7 @@ sub getInvestedAmount {
                         next;
                     }
 
-                    # invalidate commision if wrong currency
+                    # invalidate commission if wrong currency
                     if ($curr ne $row[5]) {
                         print "Error: Unexpected commision currency ($row[0] $row[1] $s units on $row[6]): act=$row[5], exp=$curr\n";
                         $row[4] = 0;
@@ -607,16 +607,16 @@ sub getInvestedAmount {
                     # act per the transaction type
                     switch ($row[0]) {
                         case ['withdraw'] {
-                            # ignore the commision as it would be covered from the remaining ballance and does
-                            # not affect the vaue of the investment
-                            # (Note: If deposits and withdrawals incured any commissions, than there will be
-                            # a residual investment after a withdrawal that would clear the ballance, and that
+                            # ignore the commission as it would be covered from the remaining balance and does
+                            # not affect the value of the investment
+                            # (Note: If deposits and withdrawals incurred any commissions, than there will be
+                            # a residual investment after a withdrawal that would clear the balance, and that
                             # residual amount would equal the sum of all related commissions.)
-                            $ballance = -($row[1]*$row[2]);
+                            $balance = -($row[1]*$row[2]);
                         }
                         case ['deposit'] {
-                            # ignore the commision as it would be covered from the deposited amount
-                            $ballance += $row[1]*$row[2];
+                            # ignore the commission as it would be covered from the deposited amount
+                            $balance += $row[1]*$row[2];
                         }
                         else { print "\nError: Unknown transaction type: $row[0]\n"; }
                     }
@@ -627,7 +627,7 @@ sub getInvestedAmount {
             next;
         }
 
-        $href->{$s} = $ballance;
+        $href->{$s} = $balance;
     }
 }
 
@@ -635,12 +635,12 @@ sub getInvestedAmount {
 # Gets the total price for the investment.
 #
 # The total invested amount consists of the price paid for all units bought and
-# commisions paid for all buy and sell transactions. This total amount can be
+# commissions paid for all buy and sell transactions. This total amount can be
 # used as a basis to compute the percentage of realized/unrealized gain.
 #
 # arguments:
 #   - reference to the open DB connection
-#   - reference to a hash array to be filled with invetment price records
+#   - reference to a hash array to be filled with investment price records
 sub getTotalInvestedAmount {
     my $dbh = shift || return;
     my $href = shift || return;
@@ -652,12 +652,12 @@ sub getTotalInvestedAmount {
     }
 
     foreach my $s (@syms) {
-        my $ballance = 0;
+        my $balance = 0;
         my $stmt; # SQL statement
         my $sth; # compiled SQL statement handle
         my $rv; # SQL execution return value
 
-        # get amounts that directly increase or decrease the ballance
+        # get amounts that directly increase or decrease the balance
         $stmt = qq(select type, amount, unit_price, unit_curr, comm_price, comm_curr, date from xfrs where type in ('buy','sell'));
         $stmt = $stmt." and source_curr='$s'";
         $stmt = $stmt." order by date;";
@@ -673,7 +673,7 @@ sub getTotalInvestedAmount {
                 if (scalar(@row) < 6) { next; }
                 if (!defined $row[0] || length $row[0] == 0) { next; }
 
-                # set the currence based on the 1st transaction record
+                # set the currency based on the 1st transaction record
                 if ($curr eq '') { $curr = $row[3]; }
 
                 # skip the record if wrong unit currency
@@ -682,7 +682,7 @@ sub getTotalInvestedAmount {
                     next;
                 }
 
-                # invalidate commision if wrong currency
+                # invalidate commission if wrong currency
                 if ($curr ne $row[5]) {
                     print "Error: Unexpected commision currency ($row[0] $row[1] $s units on $row[6]): act=$row[5], exp=$curr\n";
                     $row[4] = 0;
@@ -691,28 +691,28 @@ sub getTotalInvestedAmount {
                 # act per the transaction type
                 switch ($row[0]) {
                     case ['sell'] {
-                        # For a sell transactions count only the commision.
-                        $ballance += $row[4];
+                        # For a sell transactions count only the commission.
+                        $balance += $row[4];
                     }
                     case ['buy'] {
-                        # For a buy transaction count the buy price plus the commision.
-                        $ballance += $row[1]*$row[2] + $row[4];
+                        # For a buy transaction count the buy price plus the commission.
+                        $balance += $row[1]*$row[2] + $row[4];
                     }
                     else { print "\nError: Unknown transaction type: $row[0]\n"; }
                 }
             }
         }
 
-        $href->{$s} = $ballance;
+        $href->{$s} = $balance;
     }
 }
 
 
 # Gets the price earned on all sell transactions.
 #
-# The price does not count commisions paid for the sell transactions. Hence
+# The price does not count commissions paid for the sell transactions. Hence
 # to get a real amount earned on selling, one would need to reduce the total
-# sell price by the amount paid for sell commisions.
+# sell price by the amount paid for sell commissions.
 #
 # arguments:
 #   - reference to the open DB connection
@@ -728,7 +728,7 @@ sub getTotalSellPrice {
     }
 
     foreach my $s (@syms) {
-        my $ballance = 0;
+        my $balance = 0;
         my $stmt; # SQL statement
         my $sth; # compiled SQL statement handle
         my $rv; # SQL execution return value
@@ -749,7 +749,7 @@ sub getTotalSellPrice {
                 if (scalar(@row) < 6) { next; }
                 if (!defined $row[0] || length $row[0] == 0) { next; }
 
-                # set the currence based on the 1st transaction record
+                # set the currency based on the 1st transaction record
                 if ($curr eq '') { $curr = $row[3]; }
 
                 # skip the record if wrong unit currency
@@ -758,7 +758,7 @@ sub getTotalSellPrice {
                     next;
                 }
 
-                # invalidate commision if wrong currency
+                # invalidate commission if wrong currency
                 if ($curr ne $row[5]) {
                     print "Error: Unexpected commision currency ($row[0] $row[1] $s units on $row[6]): act=$row[5], exp=$curr\n";
                     $row[4] = 0;
@@ -767,15 +767,15 @@ sub getTotalSellPrice {
                 # act per the transaction type
                 switch ($row[0]) {
                     case ['sell'] {
-                        # Take only the sell price and ignore commision.
-                        $ballance += $row[1]*$row[2];
+                        # Take only the sell price and ignore commission.
+                        $balance += $row[1]*$row[2];
                     }
                     else { print "\nError: Unknown transaction type: $row[0]\n"; }
                 }
             }
         }
 
-        $href->{$s} = $ballance;
+        $href->{$s} = $balance;
     }
 }
 
@@ -961,7 +961,7 @@ sub getStockTransactions {
             } elsif ($row[0] eq 'dividend') {
                 # Dividend does not increase the amount invested into the stock
                 # and hence we keep it in a separate "account" and do not put it
-                # into the cashflow. It will be added to the remaining ballance/NAV.
+                # into the cashflow. It will be added to the remaining balance/NAV.
 #                $dividend += $row[2]*$row[3];
 #                $dividend -= $row[5];
                 next;
@@ -1050,8 +1050,8 @@ sub getCachedQuote {
 # - Yahoo Finance
 # - AlphaVantage
 #
-# This routine is somewhat strane for the `xfrs` package, which is intended to provide
-# access routines to an XFRS DB. However, the quotes are needed for the `getNAV` routine.
+# This routine is somewhat strange for the `xfrs` package, which is intended to provide
+# access routines to an XFRS DB. However, the quotes are needed for the getNAV() routine.
 #
 # Separate routines exist for stocks and currencies as the API to get real-time quotes
 # is different.
@@ -1121,8 +1121,8 @@ sub getQuoteStock {
 # - Yahoo Finance
 # - AlphaVantage
 #
-# This routine is somewhat strane for the `xfrs` package, which is intended to provide
-# access routines to an XFRS DB. However, the quotes are needed for the `getNAV` routine.
+# This routine is somewhat strange for the `xfrs` package, which is intended to provide
+# access routines to an XFRS DB. However, the quotes are needed for the getNAV() routine.
 #
 # Separate routines exist for stocks and currencies as the API to get real-time quotes
 # is different.

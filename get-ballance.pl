@@ -4,7 +4,7 @@
 
 # -----------------------------------------------------------------------------
 # Description:
-#   Prints the current ballance of a portfolio from DB, separately for each
+#   Prints the current balance of a portfolio from DB, separately for each
 #   symbol and as a total net asset value (NAV).
 #
 #   This script is similar to `get-quotes.pl` but groups the data differently
@@ -32,48 +32,48 @@ my $stmt;
 my $sth;
 my $rv;
 
-my %ballance;
+my %bllance;
 my %nav;
 
-# Get ballance
+# Get balance
 # ------------
-%ballance = ();
+%balance = ();
 %nav = ();
 my @symbols = xfrs::getSymbols( $dbh );
 
 foreach my $s (@symbols) {
-    $ballance{$s} = 0;
+    $balance{$s} = 0;
     $nav{$s} = 0;
 #print "$s\n";
 }
 
-xfrs::getBallance( $dbh, \%ballance );
+xfrs::getBalance( $dbh, \%balance );
 xfrs::getNAV( $dbh, \%nav );
 
-# Report cash ballance
+# Report cash balance
 # --------------------
 print "# Currencies\n";
 my @currencies = xfrs::getCurrencies($dbh);
 foreach my $s (@currencies) {
-    print "\t$s = $ballance{$s}\n";
+    print "\t$s = $balance{$s}\n";
 }
 
 
-# Report stock ballance
+# Report stock balance
 # ---------------------
 print "# Stocks (in units)\n";
 my @stocks = xfrs::getStocks($dbh);
 foreach my $s (@stocks) {
-    print "\t$s = $ballance{$s} ($nav{$s})\n";
+    print "\t$s = $balance{$s} ($nav{$s})\n";
 }
 
 # Report total NAV per currency
 # -----------------------------
 my %totals;
 
-# initialize with cash ballance
+# initialize with cash balance
 foreach my $s (@currencies) {
-    $totals{$s} = $ballance{$s};
+    $totals{$s} = $balance{$s};
 }
 
 # add NAV of all stocks

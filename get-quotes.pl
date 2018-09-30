@@ -194,33 +194,33 @@ if ($opt->base ne "") {
     }
 }
 
-# Print ballance
+# Print balance
 # --------------
-# get the actual ballance
-my %ballance;
-xfrs::getBallance($dbh, \%ballance);
+# get the actual balance
+my %balance;
+xfrs::getBalance($dbh, \%balance);
 
 # collect NAV (net asset value)
 my $nav = 0;
 
-# print the cash ballance
+# print the cash balance
 foreach my $c (@currencies) {
-    print "$c,$ballance{$c},$c";
+    print "$c,$balance{$c},$c";
     if (exists($curconv{$c})) {
-        my $v = $ballance{$c}*$curconv{$c};
+        my $v = $balance{$c}*$curconv{$c};
         print ",".$v.",".$opt->base;
         $nav += $v;
     }
     print "\n";
 }
 
-# print the equity ballance
+# print the equity balance
 foreach my $s (@stocks) {
     my $p = $quotes{$s}->{'price'} || 0;
     my $c = $quotes{$s}->{'currency'} || "";
-    print "$s,".($ballance{$s}*$p).",$c";
+    print "$s,".($balance{$s}*$p).",$c";
     if (exists $curconv{$c} && defined $curconv{$c}) {
-        my $v = $ballance{$s}*$p*$curconv{$c};
+        my $v = $balance{$s}*$p*$curconv{$c};
         print ",".$v.",".$opt->base;
         $nav += $v;
     }

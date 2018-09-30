@@ -219,7 +219,7 @@ while (my $line = <$fd>) {
             $$rec[$rec_indexes->{'source_curr'}] = $attrs_hash->{'stock'};
         }
 
-        # for now treat tax as the commisions
+        # for now treat tax as the commissions
         if (exists $attrs_hash->{'tax'}) {
             if ($attrs_hash->{'tax'} =~ /(\d+(\.\d*)?)([A-Z]+)/) {
                 $$rec[$rec_indexes->{'comm_price'}] = $1;

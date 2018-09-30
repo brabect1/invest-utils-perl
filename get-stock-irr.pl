@@ -23,14 +23,14 @@ foreach my $s (@stocks) {
     my %cashflow = ();
 
     my $curr = ''; # stock currency shall be same for all transactions
-    my $units = 0; # stock units ballance
+    my $units = 0; # stock units balance
     my $dividend = 0; # accumulated dividend
     my $date = ''; # date of last buy/sell transaction 
     my $stmt; # SQL statement
     my $sth; # compiled SQL statement handle
     my $rv; # SQL execution return value
 
-    # get amounts that directly increase or decrease the ballance
+    # get amounts that directly increase or decrease the balance
     $stmt = qq(select type, date, amount, unit_price, unit_curr, comm_price, comm_curr from xfrs where source_curr = );
     $stmt = $stmt."'$s' order by date;";
     $sth = $dbh->prepare( $stmt );
@@ -58,7 +58,7 @@ foreach my $s (@stocks) {
                 next;
             }
 
-            # sanity check: commisions currency
+            # sanity check: commissions currency
             if ($row[6] ne $curr) {
                 print "\nError: Unexpected commision currency for $s $row[0]: act $row[6], exp $curr\n";
                 next;
@@ -77,7 +77,7 @@ foreach my $s (@stocks) {
             } elsif ($row[0] eq 'dividend') {
                 # Dividend does not increase the amount invested into the stock
                 # and hence we keep it in a separate "account" and do not put it
-                # into the cashflow. It will be added to the remaining ballance/NAV.
+                # into the cashflow. It will be added to the remaining balance/NAV.
                 $dividend += $row[2]*$row[3];
                 $dividend -= $row[5];
                 next;
@@ -87,7 +87,7 @@ foreach my $s (@stocks) {
         }
     }
 
-    # get quote (to compute the actual ballance)
+    # get quote (to compute the actual balance)
     $date = localtime->strftime('%Y-%m-%d');
     $cashflow{$date} = 0;
     if ($units > 0) {
