@@ -37,22 +37,22 @@ my $rec_templates = {
         '1970-01-01',
         0,
         1,
-        'CZK',
+        '',
         0,
-        'CZK',
+        '',
         0,
-        'CZK'
+        ''
     ],
     'dividend' => [
         'dividend',
         '1970-01-01',
         0,
         0,
-        'CZK',
+        '',
         0,
         '',
         0,
-        'CZK'
+        ''
     ],
     'fx' => [
         'fx',
@@ -62,8 +62,8 @@ my $rec_templates = {
         '',
         0,
         '',
-        100,
-        'CZK'
+        0,
+        ''
     ],
     'buy' => [
         'buy',
@@ -137,6 +137,8 @@ while (my $line = <$fd>) {
             if ($attrs_hash->{'amount'} =~ /(\d+(\.\d*)?)([A-Z]+)/) {
                 $$rec[$rec_indexes->{'amount'}] = $1;
                 $$rec[$rec_indexes->{'unit_curr'}] = $3;
+                $$rec[$rec_indexes->{'source_curr'}] = $3;
+                $$rec[$rec_indexes->{'comm_curr'}] = $3;
             } else {
                 print "Unexpected format of transaction amoount, line $lineno: $attrs_hash->{'amount'}";
             }
