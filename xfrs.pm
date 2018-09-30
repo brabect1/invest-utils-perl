@@ -8,16 +8,16 @@ use Finance::Quote;
 use POSIX;
 
 ## #---->>>> 31-Oct-2017
-## real gain = sold units sell price - sold units buy price - sell commission - sold units buy commission
+## sell gain = sold units sell price - sold units buy price - sell commission - sold units buy commission
 ## invested amount = unsold units price + unsold units commission
 ## 
 ## total invested amount = 
 ## = total buy commission + total sell commission + all units buy price =
 ## = (sold units buy commission + unsold units buy commission) + sell commission + (sold units buy price + unsold units buy price) =
 ## = (unsold units buy price + unsold units commission) + (sold units buy price + sell commission + sold units buy commission) =
-## = invested amount + (sold units sell price - real gain)
+## = invested amount + (sold units sell price - sell gain)
 ## 
-## DONE --> implement getRealGain() and getTotalInvestedAmount() --> getTotalSellPrice can be computed from the other values
+## DONE --> implement geteSellGain() and getTotalInvestedAmount() --> getTotalSellPrice can be computed from the other values
 ## #<<<<----
 
 package xfrs;
@@ -222,6 +222,11 @@ sub isStock {
 
 
 # gets the current balance based on the transfers stored in the given DB
+#
+# The routine acts on both stocks and currencies. For stocks it returns the
+# number of securities held, for currencies it returns the remaining cash
+# balance.
+#
 # arguments:
 #   - reference to the open DB connection
 #   - reference to a hash array to be filled with a balance
@@ -242,6 +247,7 @@ sub getBalance {
         my $rv; # SQL execution return value
 
         # get amounts that directly increase or decrease the balance
+        # (shall affect only cash balances)
         $stmt = qq(select type, amount*unit_price from xfrs where Unit_curr = );
         $stmt = $stmt."'$s';";
         $sth = $dbh->prepare( $stmt );
@@ -261,6 +267,7 @@ sub getBalance {
         }
 
         # subtract any conversions where this was a source currency
+        # (shall affect only cash balances)
         $stmt = qq(select type, source_price from xfrs where type='fx' and source_curr=);
         $stmt = $stmt."'$s';";
         $sth = $dbh->prepare( $stmt );
@@ -276,6 +283,7 @@ sub getBalance {
         }
 
         # subtract any commissions
+        # (shall affect only cash balances)
         $stmt = qq(select type, sum(comm_price) from xfrs where comm_curr = );
         $stmt = $stmt."'$s';";
         $sth = $dbh->prepare( $stmt );
@@ -291,6 +299,7 @@ sub getBalance {
         }
 
         # add increases/decreases of stock amount
+        # (shall affect only stock balances)
         $stmt = qq(select type, amount from xfrs where type in ('sell', 'buy') and source_curr = );
         $stmt = $stmt."'$s';";
         $sth = $dbh->prepare( $stmt );
@@ -450,7 +459,7 @@ sub getDividends {
 
 
 
-# Gets the invested amount for a stock symbol in the given DB.
+# Gets the (remaining) invested amount for a stock symbol in the given DB.
 #
 # The invested amount is calculated as the investment for all buy transactions
 # less the corresponding value from sell transactions. The transactions are
@@ -562,6 +571,104 @@ sub getInvestedAmount {
                 } 
             }
         } elsif (isCurrency($dbh,$s)) {
+            # get balance of the given symbol
+            # (For a currency the actual balance represents the remaining invested amount.)
+            my %cur;
+            $cur{$s} = 0;
+            getBalance($dbh,\%cur);
+            $balance = $cur{$s};
+        } else {
+            # unknown symbol
+            next;
+        }
+
+        $href->{$s} = $balance;
+    }
+}
+
+
+# Gets the total price for the investment.
+#
+# The total invested amount consists of the price paid for all units bought and
+# commissions paid for all buy and sell transactions. This total amount can be
+# used as a basis to compute the percentage of realized/unrealized gain.
+#
+# Note that the total amount accumulates over the lifetime of the portfolio. If
+# one flips the same security over and over again, it will count all the flips.
+# For example, buying AAPL for 1000USD, then selling it for 1200USD, than buying
+# it again for 1000USD and selling for 1500USD will yield the total invested
+# amount of 2000USD.
+#
+# The same applies for deposits and withdrawals of cash. However, while flipping
+# stocks is to provide fair performance measures, depositing and withdrawing cache
+# might skew the total portfolio performance.
+#
+# arguments:
+#   - reference to the open DB connection
+#   - reference to a hash array to be filled with investment price records
+sub getTotalInvestedAmount {
+    my $dbh = shift || return;
+    my $href = shift || return;
+
+
+    my @syms = keys %$href;
+    if (scalar(@syms) == 0) {
+        @syms = getSymbols($dbh);
+    }
+
+    foreach my $s (@syms) {
+        my $balance = 0;
+        my $stmt; # SQL statement
+        my $sth; # compiled SQL statement handle
+        my $rv; # SQL execution return value
+
+        if (isStock($dbh,$s)) {
+            # get amounts that directly increase or decrease the balance
+            $stmt = qq(select type, amount, unit_price, unit_curr, comm_price, comm_curr, date from xfrs where type in ('buy','sell'));
+            $stmt = $stmt." and source_curr='$s'";
+            $stmt = $stmt." order by date;";
+            $sth = $dbh->prepare( $stmt );
+            $rv = $sth->execute();
+            if($rv < 0){
+                print $DBI::errstr;
+            } else {
+                my $curr = '';
+
+                # process the transactions fetched from DB
+                while (my @row = $sth->fetchrow_array()) {
+                    if (scalar(@row) < 6) { next; }
+                    if (!defined $row[0] || length $row[0] == 0) { next; }
+
+                    # set the currency based on the 1st transaction record
+                    if ($curr eq '') { $curr = $row[3]; }
+
+                    # skip the record if wrong unit currency
+                    if ($curr ne $row[3]) {
+                        print "Error: Unexpected unit currency ($row[0] $row[1] $s units on $row[6]): act=$row[3], exp=$curr\n";
+                        next;
+                    }
+
+                    # invalidate commission if wrong currency
+                    if ($curr ne $row[5]) {
+                        print "Error: Unexpected commision currency ($row[0] $row[1] $s units on $row[6]): act=$row[5], exp=$curr\n";
+                        $row[4] = 0;
+                    }
+
+                    # act per the transaction type
+                    switch ($row[0]) {
+                        case ['sell'] {
+                            # For a sell transactions count only the commission.
+                            $balance += $row[4];
+                        }
+                        case ['buy'] {
+                            # For a buy transaction count the buy price plus the commission.
+                            $balance += $row[1]*$row[2] + $row[4];
+                        }
+                        else { print "\nError: Unknown transaction type: $row[0]\n"; }
+                    }
+                }
+            }
+        } elsif (isCurrency($dbh,$s)) {
             # TODO 2017-12-24: This is temporary solution that only counts deposits and withdrawals.
             #                  We might also consider currency translations, but that would depend
             #                  on how the 'invested amount' is supposed to be used. If we care about
@@ -607,12 +714,14 @@ sub getInvestedAmount {
                     # act per the transaction type
                     switch ($row[0]) {
                         case ['withdraw'] {
+                            # ignore the withdrawn amount as it does not change the money pushed
+                            # into the system
+
                             # ignore the commission as it would be covered from the remaining balance and does
                             # not affect the value of the investment
                             # (Note: If deposits and withdrawals incurred any commissions, than there will be
                             # a residual investment after a withdrawal that would clear the balance, and that
                             # residual amount would equal the sum of all related commissions.)
-                            $balance = -($row[1]*$row[2]);
                         }
                         case ['deposit'] {
                             # ignore the commission as it would be covered from the deposited amount
@@ -625,82 +734,6 @@ sub getInvestedAmount {
         } else {
             # unknown symbol
             next;
-        }
-
-        $href->{$s} = $balance;
-    }
-}
-
-
-# Gets the total price for the investment.
-#
-# The total invested amount consists of the price paid for all units bought and
-# commissions paid for all buy and sell transactions. This total amount can be
-# used as a basis to compute the percentage of realized/unrealized gain.
-#
-# arguments:
-#   - reference to the open DB connection
-#   - reference to a hash array to be filled with investment price records
-sub getTotalInvestedAmount {
-    my $dbh = shift || return;
-    my $href = shift || return;
-
-
-    my @syms = keys %$href;
-    if (scalar(@syms) == 0) {
-        @syms = getSymbols($dbh);
-    }
-
-    foreach my $s (@syms) {
-        my $balance = 0;
-        my $stmt; # SQL statement
-        my $sth; # compiled SQL statement handle
-        my $rv; # SQL execution return value
-
-        # get amounts that directly increase or decrease the balance
-        $stmt = qq(select type, amount, unit_price, unit_curr, comm_price, comm_curr, date from xfrs where type in ('buy','sell'));
-        $stmt = $stmt." and source_curr='$s'";
-        $stmt = $stmt." order by date;";
-        $sth = $dbh->prepare( $stmt );
-        $rv = $sth->execute();
-        if($rv < 0){
-            print $DBI::errstr;
-        } else {
-            my $curr = '';
-
-            # process the transactions fetched from DB
-            while (my @row = $sth->fetchrow_array()) {
-                if (scalar(@row) < 6) { next; }
-                if (!defined $row[0] || length $row[0] == 0) { next; }
-
-                # set the currency based on the 1st transaction record
-                if ($curr eq '') { $curr = $row[3]; }
-
-                # skip the record if wrong unit currency
-                if ($curr ne $row[3]) {
-                    print "Error: Unexpected unit currency ($row[0] $row[1] $s units on $row[6]): act=$row[3], exp=$curr\n";
-                    next;
-                }
-
-                # invalidate commission if wrong currency
-                if ($curr ne $row[5]) {
-                    print "Error: Unexpected commision currency ($row[0] $row[1] $s units on $row[6]): act=$row[5], exp=$curr\n";
-                    $row[4] = 0;
-                }
-
-                # act per the transaction type
-                switch ($row[0]) {
-                    case ['sell'] {
-                        # For a sell transactions count only the commission.
-                        $balance += $row[4];
-                    }
-                    case ['buy'] {
-                        # For a buy transaction count the buy price plus the commission.
-                        $balance += $row[1]*$row[2] + $row[4];
-                    }
-                    else { print "\nError: Unknown transaction type: $row[0]\n"; }
-                }
-            }
         }
 
         $href->{$s} = $balance;

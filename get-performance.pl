@@ -30,10 +30,13 @@ my $stmt;
 my $sth;
 my $rv;
 
-my %ballance;
+my %balance;
 my %nav;
 my %dividends;
 my %investment;
+my %investment_tot;
+my %sell_val;
+my %sell_gain;
 
 my @symbols = xfrs::getSymbols( $dbh );
 my @currencies = xfrs::getCurrencies($dbh);
@@ -41,13 +44,16 @@ my @stocks = xfrs::getStocks($dbh);
 
 # Get symbol and stock properties
 # -------------------------------
-%ballance = ();
+%balance = ();
 %nav = ();
 
 foreach my $s (@symbols) {
-    $ballance{$s} = 0;
+    $balance{$s} = 0;
     $nav{$s} = 0;
     $investment{$s} = 0;
+    $investment_tot{$s} = 0;
+    $sell_val{$s} = 0;
+    $sell_gain{$s} = 0;
 }
 
 foreach my $s (@stocks) {
@@ -55,19 +61,22 @@ foreach my $s (@stocks) {
     $dividends{$s} = 0;
 }
 
-xfrs::getBallance( $dbh, \%ballance );
+xfrs::getBalance( $dbh, \%balance );
 xfrs::getNAV( $dbh, \%nav );
 xfrs::getDividend( $dbh, \%dividends );
 xfrs::getInvestedAmount( $dbh, \%investment );
+xfrs::getTotalInvestedAmount( $dbh, \%investment_tot );
+xfrs::getTotalSellPrice( $dbh, \%sell_val );
+xfrs::getSellGain( $dbh, \%sell_gain );
 
-# Report stock ballance
+# Report stock balance
 # ---------------------
 print "# Stocks\n";
 my %props = ();
 foreach my $s (@stocks) {
     $props{$s} = {};
     $props{$s}->{'sym'} = $s;
-    $props{$s}->{'units'} = $ballance{$s};
+    $props{$s}->{'units'} = $balance{$s};
     if ($nav{$s}  =~ /(\d+(\.\d*)?)([A-Z]+)/) {
         $props{$s}->{'nav'} = $1;
         $props{$s}->{'curr'} = $3;
@@ -76,36 +85,65 @@ foreach my $s (@stocks) {
     }
     $props{$s}->{'dividend'} = $dividends{$s};
     $props{$s}->{'investment'} = $investment{$s};
+    $props{$s}->{'total_investment'} = $investment_tot{$s};
+    $props{$s}->{'sell_val'} = $sell_val{$s};
+    $props{$s}->{'sell_gain'} = $sell_gain{$s};
     if (exists($props{$s}->{'curr'})) {
+        $props{$s}->{'real_gain'} =  $props{$s}->{'sell_gain'} + $props{$s}->{'dividend'};
         $props{$s}->{'unreal_gain'} =  $props{$s}->{'nav'} - $props{$s}->{'investment'};
-        $props{$s}->{'total_gain'} =  $props{$s}->{'unreal_gain'} + $props{$s}->{'dividend'};
-
-        #***TBD*** This is not correct as the `investment` represents the remaining invested amount.
-        $props{$s}->{'total_gain_percent'} =  sprintf("%.3f", $props{$s}->{'total_gain'}*100/$props{$s}->{'investment'});
+        $props{$s}->{'total_gain'} =  $props{$s}->{'unreal_gain'} + $props{$s}->{'real_gain'};
+        $props{$s}->{'total_gain_percent'} =  sprintf("%.3f", $props{$s}->{'total_gain'}*100/$props{$s}->{'total_investment'});
     }
 
     # compute IRR
     my %cashflow = xfrs::getStockTransactions($dbh,$s);
     $cashflow{localtime->strftime('%Y-%m-%d')} = -($props{$s}->{'nav'} + $props{$s}->{'dividend'});
     $props{$s}->{'irr'} = sprintf("%.3f", 100 * xirr(%cashflow, precision => 0.001));
+
+    # sanity check: (total_investment - remain_investment) = (total_sell - gain_sell)
+    my $invest_diff = ($props{$s}->{'total_investment'} - $props{$s}->{'investment'});
+    my $sell_diff = ($props{$s}->{'sell_val'} - $props{$s}->{'sell_gain'});
+    if ($invest_diff != $sell_diff) {
+        print "Error: Inconsistent data for $s ($invest_diff vs. $sell_diff): total_invest=".
+            $props{$s}->{'total_investment'}.", remain_invest=".$props{$s}->{'investment'}.
+            ", sell_total=".$props{$s}->{'sell_val'}.", sell_gain=".$props{$s}->{'sell_gain'}."\n";
+    }
 }
 
-my @cols = (
+my @cols_order = (
     'sym',
     'curr',
+    'total_investment',
     'investment',
     'nav',
+    'sell_val',
+    'sell_gain',
     'dividend',
     'total_gain',
     'total_gain_percent',
     'irr'
 );
-foreach my $c (@cols) {
-    print "\t$c";
+my %cols_name = (
+    'sym' => 'sym',
+    'curr' => 'curr',
+    'investment' => 'remain_invest',
+    'total_investment' => 'total_invest',
+    'nav' => 'nav',
+    'sell_val' => 'sell_val',
+    'sell_gain' => 'sell_gain',
+    'dividend' => 'dividend',
+    'real_gain' => 'real_gain',
+    'unreal_gain' => 'unreal_gain',
+    'total_gain' => 'total_gain',
+    'total_gain_percent' => 'total_gain_%',
+    'irr' => 'irr_%'
+);
+foreach my $c (@cols_order) {
+    print "\t$cols_name{$c}";
 }
 print "\n";
 foreach my $s (@stocks) {
-    foreach my $c (@cols) {
+    foreach my $c (@cols_order) {
         print "\t".(exists($props{$s}->{$c}) ? $props{$s}->{$c} : "???");
     }
     print "\n";
@@ -114,7 +152,7 @@ foreach my $s (@stocks) {
 # Report totals for stocks of the same currency
 # ---------------------------------------------
 # ***TBD*** This is a temporary solution. Properly, it shall be computed
-#           form the results of DB queries. The reason is that for calculating
+#           from the results of DB queries. The reason is that for calculating
 #           IRR we will need all the transactions, not just a "total sum".
 print "# Stocks (total)\n";
 
@@ -133,31 +171,45 @@ foreach my $s (@stocks) {
         $stocks_total{$curr}->{'nav'} = 0;
         $stocks_total{$curr}->{'dividend'} = 0;
         $stocks_total{$curr}->{'investment'} = 0;
+        $stocks_total{$curr}->{'total_investment'} = 0;
+        $stocks_total{$curr}->{'sell_val'} = 0;
+        $stocks_total{$curr}->{'sell_gain'} = 0;
         $stocks_total{$curr}->{'symbols'} = '';
     }
     $stocks_total{$curr}->{'nav'} += $props{$s}->{'nav'};
     $stocks_total{$curr}->{'dividend'} += $props{$s}->{'dividend'};
     $stocks_total{$curr}->{'investment'} += $props{$s}->{'investment'};
+    $stocks_total{$curr}->{'total_investment'} += $props{$s}->{'total_investment'};
+    $stocks_total{$curr}->{'sell_val'}  += $props{$s}->{'sell_val'};
+    $stocks_total{$curr}->{'sell_gain'} += $props{$s}->{'sell_gain'};
     $stocks_total{$curr}->{'symbols'} .= $s.',';
 }
 
-foreach my $c (@cols) {
-    print "\t$c";
+foreach my $c (@cols_order) {
+    print "\t$cols_name{$c}";
 }
 print "\n";
 foreach my $s (sort keys %stocks_total) {
+    $stocks_total{$s}->{'real_gain'} =  $stocks_total{$s}->{'sell_gain'} + $stocks_total{$s}->{'dividend'};
     $stocks_total{$s}->{'unreal_gain'} =  $stocks_total{$s}->{'nav'} - $stocks_total{$s}->{'investment'};
-    $stocks_total{$s}->{'total_gain'} =  $stocks_total{$s}->{'unreal_gain'} + $stocks_total{$s}->{'dividend'};
-
-    #***TBD*** This is not correct as the `investment` represents the remaining invested amount.
-    $stocks_total{$s}->{'total_gain_percent'} =  sprintf("%.3f", $stocks_total{$s}->{'total_gain'}*100/$stocks_total{$s}->{'investment'});
+    $stocks_total{$s}->{'total_gain'} =  $stocks_total{$s}->{'unreal_gain'} + $stocks_total{$s}->{'real_gain'};
+    $stocks_total{$s}->{'total_gain_percent'} =  sprintf("%.3f", $stocks_total{$s}->{'total_gain'}*100/$stocks_total{$s}->{'total_investment'});
 
     # calculate IRR
     my %cashflow = xfrs::getStockTransactions($dbh,split(',',$stocks_total{$s}->{'symbols'}));
     $cashflow{localtime->strftime('%Y-%m-%d')} = -($stocks_total{$s}->{'nav'} + $stocks_total{$s}->{'dividend'});
     $stocks_total{$s}->{'irr'} = sprintf("%.3f", 100 * xirr(%cashflow, precision => 0.001));
 
-    foreach my $c (@cols) {
+    # sanity check: (total_investment - remain_investment) = (total_sell - gain_sell)
+    my $invest_diff = ($stocks_total{$s}->{'total_investment'} - $stocks_total{$s}->{'investment'});
+    my $sell_diff = ($stocks_total{$s}->{'sell_val'} - $stocks_total{$s}->{'sell_gain'});
+    if ($invest_diff != $sell_diff) {
+        print "Error: Inconsistent data for $s ($invest_diff vs. $sell_diff): total_invest=".
+            $stocks_total{$s}->{'total_investment'}.", remain_invest=".$stocks_total{$s}->{'investment'}.
+            ", sell_total=".$stocks_total{$s}->{'sell_val'}.", sell_gain=".$stocks_total{$s}->{'sell_gain'}."\n";
+    }
+
+    foreach my $c (@cols_order) {
         print "\t".(exists($stocks_total{$s}->{$c}) ? $stocks_total{$s}->{$c} : "???");
     }
     print "\n";
@@ -177,15 +229,19 @@ $base_total{$base}->{'units'} = 'n/a';
 $base_total{$base}->{'nav'} = 0;
 $base_total{$base}->{'dividend'} = 0;
 $base_total{$base}->{'investment'} = 0;
+$base_total{$base}->{'sell_val'} = 0;
 
 foreach my $s (@currencies) {
     $props{$s} = {};
     $props{$s}->{'sym'} = $s;
     $props{$s}->{'curr'} = $s;
-    $props{$s}->{'units'} = $ballance{$s};
+    $props{$s}->{'units'} = $balance{$s};
     $props{$s}->{'nav'} = 0;
+    $props{$s}->{'sell_val'} = 0;
+    $props{$s}->{'sell_gain'} = 0;
     $props{$s}->{'dividend'} = $dividends{$s} || 0;
     $props{$s}->{'investment'} = $investment{$s};
+    $props{$s}->{'total_investment'} = $investment_tot{$s};
 
     if ($nav{$s}  =~ /(\d+(\.\d*)?)([A-Z]+)/) {
         next if ($s ne $3);
@@ -210,7 +266,7 @@ foreach my $s (@currencies) {
 
 print "# Cash\n";
 foreach my $s (sort @currencies) {
-    foreach my $c (@cols) {
+    foreach my $c (@cols_order) {
         print "\t".(exists($props{$s}->{$c}) ? $props{$s}->{$c} : "???");
     }
     print "\n";
@@ -230,19 +286,13 @@ foreach my $s (sort @currencies) {
         } else {
             print "Error: Failed to obtain conversion rate $s to $base!\n";
         }
-#        my $rate = $q->currency($s,$base);
-#        if ($rate) {
-#            $fx_rates{$s} = $rate;
-#        } else {
-#            print "Error: Failed to obtain conversion rate $s to $base!\n";
-#        }
     }
 }
 
-# Add cash and stock ballances together
+# Add cash and stock balances together
 foreach my $s (sort @currencies) {
     next unless (exists $stocks_total{$s});
-    my @cols = qw'nav dividend';
+    my @cols = qw'nav dividend investment sell_gain';
     foreach my $c (@cols) {
         $props{$s}->{$c} += $stocks_total{$s}->{$c};
     }
@@ -252,21 +302,24 @@ foreach my $s (sort @currencies) {
 print "# Total ($base)\n";
 foreach my $s (@currencies) {
     next unless (exists $fx_rates{$s});
-    my @cols = qw'investment nav dividend';
+    my @cols = qw'investment nav dividend sell_val sell_gain total_investment';
     foreach my $c (@cols) {
         $base_total{$base}->{$c} += $props{$s}->{$c} * $fx_rates{$s};
     }
 }
 
 # Calculate gain figures
+$base_total{$base}->{'real_gain'} =  $base_total{$base}->{'sell_gain'} + $base_total{$base}->{'dividend'};
 $base_total{$base}->{'unreal_gain'} =  $base_total{$base}->{'nav'} - $base_total{$base}->{'investment'};
-$base_total{$base}->{'total_gain'} =  $base_total{$base}->{'unreal_gain'} + $base_total{$base}->{'dividend'};
-
-#***TBD*** This is not correct as the `investment` represents the remaining invested amount.
-$base_total{$base}->{'total_gain_percent'} =  sprintf("%.3f", $base_total{$base}->{'total_gain'}*100/$base_total{$base}->{'investment'});
+$base_total{$base}->{'total_gain'} =  $base_total{$base}->{'unreal_gain'} + $base_total{$base}->{'real_gain'};
+if ($base_total{$base}->{'total_investment'} == 0) {
+    $base_total{$base}->{'total_gain_percent'} = '???'; 
+} else {
+    $base_total{$base}->{'total_gain_percent'} =  sprintf("%.3f", $base_total{$base}->{'total_gain'}*100/$base_total{$base}->{'total_investment'});
+}
 
 # Print results
-foreach my $c (@cols) {
+foreach my $c (@cols_order) {
     print "\t".(exists($base_total{$base}->{$c}) ? $base_total{$base}->{$c} : "???");
 }
 print "\n";
