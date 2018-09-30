@@ -17,7 +17,7 @@ use POSIX;
 ## = (unsold units buy price + unsold units commision) + (sold units buy price + sell commision + sold units buy commision) =
 ## = invested amount + (sold units sell price - real gain)
 ## 
-## --> implement getRealGain() and getTotalInvestedAmount() --> getTotalSellPrice can be computed from the other values
+## DONE --> implement getRealGain() and getTotalInvestedAmount() --> getTotalSellPrice can be computed from the other values
 ## #<<<<----
 
 package xfrs;
@@ -318,6 +318,13 @@ sub getBallance {
 # Gets the net asset value (NAV) for the given symbols.
 #
 # The NAV value is returned with indication of the currency (e.g. 30.25USD).
+#
+# NAV is computed as the number of remaining shares (as returned by getBallance())
+# times the present share value. As such it represent the actual value of
+# a position.
+#
+# No commissions are involved in NAV. The commissions rather apply for analyzing
+# a gain or invested amount.
 #
 # arguments:
 #   - reference to the open DB connection
@@ -772,9 +779,126 @@ sub getTotalSellPrice {
     }
 }
 
-# ***tbd*** get all stock transacrions
+
+# Gets the selling gain for the investment.
+#
+# The selling gain is computed as the price of shares sold less the buying
+# price of those shares less commissions incurred for the transactions.
+#
+# The buy commissions are counted in for selling the last share of the
+# corresponding buy transaction. Thus for example, buying ten shares and
+# then selling nine of them will reduce the gain only by the selling
+# commission as there is still one share being held from the buying
+# transaction. This may seem a bit pessimistic, but it makes the accounting
+# somewhat simpler (as opposed to using proportional commission price for
+# every share).
+#
+# arguments:
+#   - reference to the open DB connection
+#   - reference to a hash array to be filled with investment gain records
+sub getSellGain {
+    my $dbh = shift || return;
+    my $href = shift || return;
+
+
+    my @syms = keys %$href;
+    if (scalar(@syms) == 0) {
+        @syms = getSymbols($dbh);
+    }
+
+    foreach my $s (@syms) {
+        my $balance = 0;
+        my $stmt; # SQL statement
+        my $sth; # compiled SQL statement handle
+        my $rv; # SQL execution return value
+
+        if (isStock($dbh,$s)) {
+            # get amounts that directly increase or decrease the balance
+            $stmt = qq(select type, amount, unit_price, unit_curr, comm_price, comm_curr, date from xfrs where type in ('buy','sell'));
+            $stmt = $stmt." and source_curr='$s'";
+            $stmt = $stmt." order by date;";
+            $sth = $dbh->prepare( $stmt );
+            $rv = $sth->execute();
+            if($rv < 0){
+                print $DBI::errstr;
+            } else {
+                my $curr = '';
+                my @trans;
+
+                # process the transactions fetched from DB
+                while (my @row = $sth->fetchrow_array()) {
+                    if (scalar(@row) < 6) { next; }
+                    if (!defined $row[0] || length $row[0] == 0) { next; }
+
+                    # set the currency based on the 1st transaction record
+                    if ($curr eq '') { $curr = $row[3]; }
+
+                    # skip the record if wrong unit currency
+                    if ($curr ne $row[3]) {
+                        print "Error: Unexpected unit currency ($row[0] $row[1] $s units on $row[6]): act=$row[3], exp=$curr\n";
+                        next;
+                    }
+
+                    # invalidate commission if wrong currency
+                    if ($curr ne $row[5]) {
+                        print "Error: Unexpected commision currency ($row[0] $row[1] $s units on $row[6]): act=$row[5], exp=$curr\n";
+                        $row[4] = 0;
+                    }
+
+                    # act per the transaction type
+                    switch ($row[0]) {
+                        case ['sell'] {
+                            # For a sell transaction count the sell price less the commission.
+                            $balance += $row[1]*$row[2] - $row[4];
+
+                            my $units = -$row[1];
+                            foreach my $rb (@trans) {
+                                $units += $rb->{'units'};
+
+                                # discount the bought units and buy commissions if
+                                # the buy transaction gets fully cleared (i.e. selling
+                                # more units than what remains of the `rb` buy transaction)
+                                if ($units <= 0) {
+                                    # clearing the whole buy transaction => discount also buy commission
+                                    $balance -= $rb->{'units'}*$rb->{'price'} + $rb->{'comm'};
+                                    $rb->{'units'} = 0;
+                                } else {
+                                    # some units remained from the buy transaction
+                                    $balance -= ($rb->{'units'} - $units)*$rb->{'price'};
+                                    $rb->{'units'} = $units;
+                                    last;
+                                }
+                            }
+
+                            # sanity check:
+                            if ($units < 0) {
+                                print "Error: Selling more than bought ($row[0] $row[1] $s units on $row[6]): num=".-$units."\n";
+                            }
+                        }
+                        case ['buy'] {
+                            # add a new record into the transactions list
+                            push(@trans, {
+                                    'units' => $row[1],
+                                    'price' => $row[2],
+                                    'curr' => $row[3],
+                                    'comm' => $row[4]
+                                }
+                            );
+                        }
+                        else { print "\nError: Unknown transaction type: $row[0]\n"; }
+                    }
+                }
+            }
+
+            # record the final balance into the result hash
+            $href->{$s} = $balance;
+        }
+    }
+}
+
+# ***tbd*** get all stock transactions
 # will return a hash indexed by date and amounts decreasing (sell) and increasing (buy) net asset value
-# each item includes the commisions expense such that the commision increases the value of buy and decreases value of sell
+# each item includes the commissions expense such that the commission increases the value of buy and decreases value of sell
 sub getStockTransactions {
     my $dbh = shift || return;
     my @syms = @_;
@@ -785,7 +909,7 @@ sub getStockTransactions {
     
     my %cashflow = ();
 
-    # get amounts that directly increase or decrease the ballance
+    # get amounts that directly increase or decrease the balance
     my $stmt = qq(select type, date, amount, unit_price, unit_curr, comm_price, comm_curr from xfrs where source_curr in );
     $stmt = $stmt."(".join(',', @syms).") order by date;";
     my $sth = $dbh->prepare( $stmt );
@@ -794,7 +918,7 @@ sub getStockTransactions {
         print $DBI::errstr;
     } else {
         my $curr = ''; # stock currency shall be same for all transactions
-        my $units = 0; # stock units ballance
+        my $units = 0; # stock units balance
         my $date = ''; # date of last buy/sell transaction 
 #        my $dividend = 0; # accumulated dividend
 
@@ -818,7 +942,7 @@ sub getStockTransactions {
                 next;
             }
 
-            # sanity check: commisions currency
+            # sanity check: commissions currency
             if ($row[6] ne $curr) {
                 print "\nError: Unexpected commision currency for $row[0]: act $row[6], exp $curr\n";
                 next;
