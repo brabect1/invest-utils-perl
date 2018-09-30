@@ -1,3 +1,11 @@
+# Copyright 2018 Tomas Brabec
+#
+# See LICENSE for license details.
+
+# -----------------------------------------------------------------------------
+# Description:
+#   Imports data from a text file into XFRS DB.
+# -----------------------------------------------------------------------------
 use DBI;
 use Getopt::Long::Descriptive;
 use strict;
@@ -68,6 +76,17 @@ my $rec_templates = {
         0,
         ''
     ],
+    'sell' => [
+        'sell',
+        '1970-01-01',
+        0,
+        0,
+        '',
+        0,
+        '',
+        0,
+        ''
+    ],
 };
 
 my $rec_list = [];
@@ -124,7 +143,7 @@ while (my $line = <$fd>) {
         }
     }
 
-    if ($$rec[0] eq 'buy') {
+    if ($$rec[0] eq 'buy' || $$rec[0] eq 'sell') {
         if (exists $attrs_hash->{'amount'}) {
             $$rec[$rec_indexes->{'amount'}] = $attrs_hash->{'amount'};
         }

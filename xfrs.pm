@@ -253,7 +253,7 @@ sub getBallance {
                 if (scalar(@row) < 2) { next; }
                 if (!defined $row[0] || length $row[0] == 0) { next; }
                 switch ($row[0]) {
-                    case ['deposit','fx','dividend'] { $ballance += $row[1]; }
+                    case ['deposit','fx','dividend','sell'] { $ballance += $row[1]; }
                     case ['buy','withdraw'] { $ballance -= $row[1]; }
                     else { print "\nError: Unknown transaction type: $row[0]\n"; }
                 }
