@@ -31,6 +31,8 @@ A simple math gets the following:
 - Unrealized gain (net asset value less remaining investment): `10*200 - 1510 = 490`
 - Total yield (realized and unrealized gain of the total investment): `100% * (730 + 490)/2530 = 48.2`
 
+Here are the commands:
+
     # Create a sample portfolio
     $ cat <<EOF > portfolio-1.txt
     buy(stock=AAPL amount=10 price=100.00USD date=2016-07-21 commission=10USD)
@@ -72,6 +74,8 @@ Then after the transactions in the Portfolio 1 we will end up with this balance:
 
 - Cache balance: `3000 - 2530 + 1750 = 3000 - 1510 + 730 = 2220`
 - Total gain is same as for stocks
+
+Commands:
 
     # Create a sample portfolio
     $ cp portfolio-1.txt portfolio-2.txt && \
