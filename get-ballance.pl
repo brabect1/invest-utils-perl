@@ -32,7 +32,7 @@ my $stmt;
 my $sth;
 my $rv;
 
-my %bllance;
+my %balance;
 my %nav;
 
 # Get balance
