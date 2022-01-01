@@ -886,6 +886,11 @@ sub getSellGain {
 
                             my $units = -$row[1];
                             foreach my $rb (@trans) {
+                                # skip the buy transaction if already depleated
+                                # (i.e. no more units left from the transaction)
+                                next if ($rb->{'units'} == 0);
+
+                                # recover sell units from the buy transaction
                                 $units += $rb->{'units'};
 
                                 # discount the bought units and buy commissions if
