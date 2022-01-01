@@ -9,7 +9,8 @@ sudo cpan Array::Utils
 #sudo cpan install DateTime
 sudo cpan install Finance:Quote
 sudo cpan Finance::Math::IRR
-export PERL5LIB=$PERL5LIB:/home/mint/perl5/lib/perl5
+sudo cpan install Scalar::Util::Numeric
+export PERL5LIB=$PERL5LIB:.:/home/mint/perl5/lib/perl5
 # touch ~/.vimrc
 # echo "filetype plugin indent on" >> ~/.vimrc
 # echo "\" show existing tab with 4 spaces width" >> ~/.vimrc

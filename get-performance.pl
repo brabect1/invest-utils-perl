@@ -15,6 +15,7 @@ use List::MoreUtils;
 use xfrs;
 use Finance::Math::IRR;
 use Time::Piece;
+use Scalar::Util::Numeric;
 
 my ($opt, $usage) = describe_options(
   '%c %o',
@@ -37,6 +38,9 @@ my %investment;
 my %investment_tot;
 my %sell_val;
 my %sell_gain;
+
+# number of decimal places to round when printing values
+my $np = 2;
 
 my @symbols = xfrs::getSymbols( $dbh );
 my @currencies = xfrs::getCurrencies($dbh);
@@ -103,8 +107,11 @@ foreach my $s (@stocks) {
     # sanity check: (total_investment - remain_investment) = (total_sell - gain_sell)
     my $invest_diff = ($props{$s}->{'total_investment'} - $props{$s}->{'investment'});
     my $sell_diff = ($props{$s}->{'sell_val'} - $props{$s}->{'sell_gain'});
-    if ($invest_diff != $sell_diff) {
-        print "Error: Inconsistent data for $s ($invest_diff vs. $sell_diff): total_invest=".
+    # using `sprintf` to round to avoid floating point math rounding errors
+    if (sprintf("%.".$np."f",$invest_diff) != sprintf("%.".$np."f",$sell_diff)) {
+        print "Error: Inconsistent data for $s (".
+            sprintf("%.".$np."f",$invest_diff)." vs. ".
+            sprintf("%.".$np."f",$sell_diff)."): total_invest=".
             $props{$s}->{'total_investment'}.", remain_invest=".$props{$s}->{'investment'}.
             ", sell_total=".$props{$s}->{'sell_val'}.", sell_gain=".$props{$s}->{'sell_gain'}."\n";
     }
@@ -144,7 +151,12 @@ foreach my $c (@cols_order) {
 print "\n";
 foreach my $s (@stocks) {
     foreach my $c (@cols_order) {
-        print "\t".(exists($props{$s}->{$c}) ? $props{$s}->{$c} : "???");
+        my $val = '???';
+        if (exists($props{$s}->{$c})) {
+           $val = $props{$s}->{$c};
+           $val = sprintf("%.".$np."f", $val) if Scalar::Util::Numeric::isfloat($val);
+        }
+        print "\t".$val;
     }
     print "\n";
 }
@@ -203,14 +215,21 @@ foreach my $s (sort keys %stocks_total) {
     # sanity check: (total_investment - remain_investment) = (total_sell - gain_sell)
     my $invest_diff = ($stocks_total{$s}->{'total_investment'} - $stocks_total{$s}->{'investment'});
     my $sell_diff = ($stocks_total{$s}->{'sell_val'} - $stocks_total{$s}->{'sell_gain'});
-    if ($invest_diff != $sell_diff) {
-        print "Error: Inconsistent data for $s ($invest_diff vs. $sell_diff): total_invest=".
+    if (sprintf("%.".$np."f",$invest_diff) != sprintf("%.".$np."f",$sell_diff)) {
+        print "Error: Inconsistent data for $s (".
+            sprintf("%.".$np."f",$invest_diff)." vs. ".
+            sprintf("%.".$np."f",$sell_diff)."): total_invest=".
             $stocks_total{$s}->{'total_investment'}.", remain_invest=".$stocks_total{$s}->{'investment'}.
             ", sell_total=".$stocks_total{$s}->{'sell_val'}.", sell_gain=".$stocks_total{$s}->{'sell_gain'}."\n";
     }
 
     foreach my $c (@cols_order) {
-        print "\t".(exists($stocks_total{$s}->{$c}) ? $stocks_total{$s}->{$c} : "???");
+        my $val = '???';
+        if (exists($stocks_total{$s}->{$c})) {
+           $val = $stocks_total{$s}->{$c};
+           $val = sprintf("%.".$np."f", $val) if Scalar::Util::Numeric::isfloat($val);
+        }
+        print "\t".$val;
     }
     print "\n";
 }
@@ -267,7 +286,12 @@ foreach my $s (@currencies) {
 print "# Cash\n";
 foreach my $s (sort @currencies) {
     foreach my $c (@cols_order) {
-        print "\t".(exists($props{$s}->{$c}) ? $props{$s}->{$c} : "???");
+        my $val = '???';
+        if (exists($props{$s}->{$c})) {
+           $val = $props{$s}->{$c};
+           $val = sprintf("%.".$np."f", $val) if Scalar::Util::Numeric::isfloat($val);
+        }
+        print "\t".$val;
     }
     print "\n";
 }
@@ -320,6 +344,11 @@ if ($base_total{$base}->{'total_investment'} == 0) {
 
 # Print results
 foreach my $c (@cols_order) {
-    print "\t".(exists($base_total{$base}->{$c}) ? $base_total{$base}->{$c} : "???");
+    my $val = '???';
+    if (exists($base_total{$base}->{$c})) {
+       $val = $base_total{$base}->{$c};
+       $val = sprintf("%.".$np."f", $val) if Scalar::Util::Numeric::isfloat($val);
+    }
+    print "\t".$val;
 }
 print "\n";
