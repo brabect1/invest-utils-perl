@@ -102,7 +102,8 @@ foreach my $s (@stocks) {
     # compute IRR
     my %cashflow = xfrs::getStockTransactions($dbh,$s);
     $cashflow{localtime->strftime('%Y-%m-%d')} = -($props{$s}->{'nav'} + $props{$s}->{'dividend'});
-    $props{$s}->{'irr'} = sprintf("%.3f", 100 * xirr(%cashflow, precision => 0.001));
+    my $irr = xirr(%cashflow, precision => 0.001);
+    $props{$s}->{'irr'} = $irr ? sprintf("%.".$np."f", 100 * $irr) : '???';
 
     # sanity check: (total_investment - remain_investment) = (total_sell - gain_sell)
     my $invest_diff = ($props{$s}->{'total_investment'} - $props{$s}->{'investment'});
