@@ -248,7 +248,7 @@ sub getBalance {
 
         # get amounts that directly increase or decrease the balance
         # (shall affect only cash balances)
-        $stmt = qq(select type, amount*unit_price from xfrs where Unit_curr = );
+        $stmt = qq(select type, amount*unit_price from xfrs where unit_curr = );
         $stmt = $stmt."'$s';";
         $sth = $dbh->prepare( $stmt );
         $rv = $sth->execute();

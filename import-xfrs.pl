@@ -32,6 +32,17 @@ my $rec_indexes = {
 };
 
 my $rec_templates = {
+    'withdraw' => [
+        'withdraw',
+        '1970-01-01',
+        0,
+        1,
+        '',
+        0,
+        '',
+        0,
+        ''
+    ],
     'deposit' => [
         'deposit',
         '1970-01-01',
@@ -120,6 +131,7 @@ while (my $line = <$fd>) {
     my $attrs_hash = {};
     foreach my $pair (@attrs) {
         my @attr_parts = split(/=/,$pair);
+        if (scalar(@attr_parts) < 2) { next; }
         $attrs_hash->{$attr_parts[0]} = $attr_parts[1];
     }
 
@@ -132,13 +144,43 @@ while (my $line = <$fd>) {
         $$rec[$rec_indexes->{'date'}] = $attrs_hash->{'date'};
     }
 
-    if ($$rec[0] eq 'deposit') {
+    if ($$rec[0] eq 'deposit' || $$rec[0] eq 'withdraw') {
+        # For the moment, we only assume currency transfers. There can
+        # potentially be asset transfers. These can be modeled, for now,
+        # as two records: A money transfer and a stock transaction.
+        # Note: A direct deposit/withdraw of an asset can also be modeled
+        # using the asset symbol as a currency and mandatory commision
+        # (even though of zero value) with a valid currency symbol and
+        # a mandatory cost basis (that would translate to `unit` currency
+        # and price). The cost basis had to be hard-coded and would likely
+        # represent the closing price at the date of the transfer per unit
+        # of the asset.
         if (exists $attrs_hash->{'amount'}) {
-            if ($attrs_hash->{'amount'} =~ /(\d+(\.\d*)?)([A-Z]+)/) {
+            if ($attrs_hash->{'amount'} =~ /(\d+(\.\d*)?)([A-Z.]+)/) {
                 $$rec[$rec_indexes->{'amount'}] = $1;
                 $$rec[$rec_indexes->{'unit_curr'}] = $3;
                 $$rec[$rec_indexes->{'source_curr'}] = $3;
                 $$rec[$rec_indexes->{'comm_curr'}] = $3;
+
+                # some transfers may incur expenses that we account as commisions
+                if (exists  $attrs_hash->{'commission'} && 
+                    $attrs_hash->{'commission'} =~ /(\d+(\.\d*)?)([A-Z.]+)/) {
+                    $$rec[$rec_indexes->{'comm_price'}] = $1;
+                    $$rec[$rec_indexes->{'comm_curr'}] = $3;
+                }
+
+                # TODO ---->>>> experimental
+                # direct asset transfers require cost basis so we can later
+                # evaluate gains on selling the asset
+                # TODO: Presently the case of depositing and withdrawing assets
+                # is not supported for evaluating portfolio performance (in
+                # `get-performance.pl`).
+                if (exists  $attrs_hash->{'costbasis'} &&
+                    $attrs_hash->{'costbasis'} =~ /(\d+(\.\d*)?)([A-Z.]+)/) {
+                    $$rec[$rec_indexes->{'unit_price'}] = $1;
+                    $$rec[$rec_indexes->{'unit_curr'}] = $3;
+                }
+                #<<<<----
             } else {
                 print "Unexpected format of transaction amoount, line $lineno: $attrs_hash->{'amount'}";
             }
