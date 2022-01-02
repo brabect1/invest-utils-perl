@@ -1031,7 +1031,7 @@ sub getCachedQuote {
     my @syms = @_;
 
     # get today's date if none given
-    if ($date eq '') {
+    if (!defined $date || $date eq '') {
         $date = POSIX::strftime("%Y-%m-%d",localtime);
     }
 
@@ -1253,8 +1253,11 @@ sub getQuoteCurrency {
 #   - reference to the open DB connection
 #   - hash array mapping record attributes to record values 
 sub addTransaction {
+    # arguments
     my $dbh = shift || return;
     my (%args) = @_;
+
+    # local variables
     my $stmt; # SQL query
     my $sth; # query handle
     my $rv; # query return value
@@ -1295,9 +1298,84 @@ sub addTransaction {
     }
 
     $stmt = $stmt.");";
-print "$stmt\n";
+#TODO print "$stmt\n";
     $dbr = $dbh->do($stmt);
     if($dbr < 0){ warn $DBI::errstr; return; }
+}
+
+
+# adds a cached quote to DB
+#
+# A *quote* is simply a price for a unit of a stock or currency. We cache
+# quotes to avoid querying online quote sources, which may come with some
+# delay (of querying the source and getting response) and maybe restrictions
+# on the source side (e.g. how many quotes we may place, how often, etc.).
+#
+# Cached quotes are simply another table in DB. Quotes are cahed only
+# explicitly through `addCahedQuote()`.
+#
+# Arguments:
+#   - reference to the open DB connection
+#   - hash array mapping quote attributes to record values; the attributes
+#     are `symbol`, `date`, `price` and `currency`; all but `date` (which
+#     defaults to the current date) are mandatory
+sub addCachedQuote{
+    # arguments
+    my $dbh = shift || return;
+    my (%args) = @_;
+
+    # local variables
+    my $stmt; # SQL query
+    my $sth; # query handle
+    my $rv; # query return value
+    my $id; # ID of the quote record
+
+    # check mandatory options
+    return unless defined $args{symbol} && defined $args{price} && defined $args{currency};
+
+    # set the `date` option unless defined
+    if (!defined $args{date}) { $args{date} = POSIX::strftime("%Y-%m-%d",localtime); }
+
+    # make sure the XFRS table exists
+    my $dbr = $dbh->do( qq(CREATE TABLE IF NOT EXISTS quotes (
+        id INT PRIMARY KEY,
+        symbol TEXT NOT NULL,
+        date TEXT,
+        price REAL,
+        curr TEXT);
+        ));
+    if($dbr < 0){ warn $DBI::errstr; return; }
+
+    # see if the same quote already exists
+    $stmt = "SELECT id FROM quotes WHERE date='".$args{date}."' AND symbol='".$args{symbol}."';";
+    $sth = $dbh->prepare( $stmt );
+    $rv = $sth->execute();
+    if($rv < 0) { warn $DBI::errstr; return; }
+
+    $rv = $sth->fetchrow_arrayref();
+    if (defined $rv) { # update the existing record
+        $id = $rv->[0];
+
+        # update the record
+        $stmt = qq(UPDATE quotes SET price=$args{price}, curr='$args{currency}' ).
+            "WHERE date='".$args{date}."' AND symbol='".$args{symbol}."';";
+        $dbr = $dbh->do($stmt);
+        if($dbr < 0){ warn $DBI::errstr; return; }
+
+    } else { # insert a new record
+        # get new record ID
+        $stmt = qq(SELECT COUNT(1) FROM quotes;);
+        $sth = $dbh->prepare( $stmt );
+        $rv = $sth->execute();
+        if($rv < 0) { warn $DBI::errstr; return; }
+        $id = ($sth->fetchrow_array())[0];
+
+        # insert the record
+        $stmt = qq(INSERT INTO quotes (id,symbol,date,price,curr) VALUES ).
+            "(".($id+1).",'$args{symbol}','$args{date}',$args{price},'$args{currency}');";
+        $dbr = $dbh->do($stmt);
+        if($dbr < 0){ warn $DBI::errstr; return; }
+    }
 }
 
 1;
