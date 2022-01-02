@@ -1243,4 +1243,61 @@ sub getQuoteCurrency {
     return %quotes;
 }
 
+
+# adds a new transaction record into DB
+#
+# The routine automatically creates a DB table if not already exists. Record
+# IDs are inferred automatically in a successive order.
+#
+# Arguments:
+#   - reference to the open DB connection
+#   - hash array mapping record attributes to record values 
+sub addTransaction {
+    my $dbh = shift || return;
+    my (%args) = @_;
+    my $stmt; # SQL query
+    my $sth; # query handle
+    my $rv; # query return value
+
+    # transaction TYPE is mandatory
+    return unless defined $args{type};
+
+    # make sure the XFRS table exists
+    my $dbr = $dbh->do( qq(CREATE TABLE IF NOT EXISTS xfrs (
+        id INT PRIMARY KEY,
+        type TEXT NOT NULL,
+        date TEXT,
+        amount INT NOT NULL,
+        unit_price REAL,
+        unit_curr TEXT,
+        source_price REAL,
+        source_curr TEXT,
+        comm_price REAL,
+        comm_curr TEXT);
+        ));
+    if($dbr < 0){ warn $DBI::errstr; return; }
+
+    # get the record ID
+    $stmt = qq(SELECT COUNT(1) FROM xfrs;);
+    $sth = $dbh->prepare( $stmt );
+    $rv = $sth->execute();
+    if($rv < 0) { warn $DBI::errstr; return; }
+    my $id = ($sth->fetchrow_array())[0];
+
+    # create the INSERT statement/query
+    $stmt = qq(INSERT INTO xfrs (id,type,date,unit_curr,source_curr,comm_curr,amount,unit_price,source_price,comm_price) VALUES )."(".($id+1).",";
+    $stmt .= "'$args{type}'";
+    foreach my $attr (('date', 'unit_curr', 'source_curr', 'comm_curr')) {
+        $stmt .= ",'".($args{$attr} || "")."'";
+    }
+    foreach my $attr (('amount', 'unit_price', 'source_price', 'comm_price')) {
+        $stmt .= ",".($args{$attr} || 0);
+    }
+
+    $stmt = $stmt.");";
+print "$stmt\n";
+    $dbr = $dbh->do($stmt);
+    if($dbr < 0){ warn $DBI::errstr; return; }
+}
+
 1;

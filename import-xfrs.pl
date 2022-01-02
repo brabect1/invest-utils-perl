@@ -10,6 +10,7 @@ use DBI;
 use Getopt::Long::Descriptive;
 use strict;
 use warnings;
+use xfrs;
 
 my ($opt, $usage) = describe_options(
   '%c %o',
@@ -20,7 +21,7 @@ my ($opt, $usage) = describe_options(
 );
 
 my $rec_indexes = {
-    'tr_type' => 0,
+    'type' => 0,
     'date' => 1,
     'amount' => 2,
     'unit_price' => 3,
@@ -281,7 +282,7 @@ close($fd);
 
 # Print records
 foreach my $rec (@$rec_list) {
-    print "$$rec[$rec_indexes->{'tr_type'}]\n";
+    print "$$rec[$rec_indexes->{'type'}]\n";
     foreach my $attr (('date', 'amount', 'unit_price', 'unit_curr', 'source_price', 'source_curr', 'comm_price', 'comm_curr')) {
         print "\t$attr:\t$$rec[$rec_indexes->{$attr}]\n";
     }
@@ -291,37 +292,44 @@ foreach my $rec (@$rec_list) {
 # Put the records into DB
 my $dbh = DBI->connect("dbi:SQLite:dbname=".$opt->db,"","",{ RaiseError => 1 }) or die $DBI::errstr;;
 
-my $dbr = $dbh->do( qq(CREATE TABLE xfrs (
-    id INT PRIMARY KEY,
-    type TEXT NOT NULL,
-    date TEXT,
-    amount INT NOT NULL,
-    unit_price REAL,
-    unit_curr TEXT,
-    source_price REAL,
-    source_curr TEXT,
-    comm_price REAL,
-    comm_curr TEXT);
-    ));
-if($dbr < 0){ print $DBI::errstr; }
-
-for(my $i=0; $i < @$rec_list; $i++) {
-
-    my $stmt = qq(INSERT INTO xfrs (id,type,date,unit_curr,source_curr,comm_curr,amount,unit_price,source_price,comm_price) VALUES )."($i,";
-    
-    my $rec = $rec_list->[$i];
-    $stmt = $stmt."'$$rec[$rec_indexes->{'tr_type'}]'";
-    foreach my $attr (('date', 'unit_curr', 'source_curr', 'comm_curr')) {
-        $stmt = $stmt.",'$$rec[$rec_indexes->{$attr}]'";
+## my $dbr = $dbh->do( qq(CREATE TABLE xfrs (
+##     id INT PRIMARY KEY,
+##     type TEXT NOT NULL,
+##     date TEXT,
+##     amount INT NOT NULL,
+##     unit_price REAL,
+##     unit_curr TEXT,
+##     source_price REAL,
+##     source_curr TEXT,
+##     comm_price REAL,
+##     comm_curr TEXT);
+##     ));
+## if($dbr < 0){ print $DBI::errstr; }
+## 
+## for(my $i=0; $i < @$rec_list; $i++) {
+## 
+##     my $stmt = qq(INSERT INTO xfrs (id,type,date,unit_curr,source_curr,comm_curr,amount,unit_price,source_price,comm_price) VALUES )."($i,";
+##     
+##     my $rec = $rec_list->[$i];
+##     $stmt = $stmt."'$$rec[$rec_indexes->{'type'}]'";
+##     foreach my $attr (('date', 'unit_curr', 'source_curr', 'comm_curr')) {
+##         $stmt = $stmt.",'$$rec[$rec_indexes->{$attr}]'";
+##     }
+##     foreach my $attr (('amount', 'unit_price', 'source_price', 'comm_price')) {
+##         $stmt = $stmt.",$$rec[$rec_indexes->{$attr}]";
+##     }
+## 
+##     $stmt = $stmt.");";
+## #print "$stmt\n";
+##     $dbr = $dbh->do($stmt);
+##     if($dbr < 0){ print $DBI::errstr; }
+## }
+foreach my $rec (@$rec_list) {
+    my %h;
+    foreach my $attr (keys %$rec_indexes) {
+        $h{$attr} = $$rec[$rec_indexes->{$attr}];
     }
-    foreach my $attr (('amount', 'unit_price', 'source_price', 'comm_price')) {
-        $stmt = $stmt.",$$rec[$rec_indexes->{$attr}]";
-    }
-
-    $stmt = $stmt.");";
-#print "$stmt\n";
-    $dbr = $dbh->do($stmt);
-    if($dbr < 0){ print $DBI::errstr; }
+    xfrs::addTransaction($dbh,%h);
 }
 
 $dbh->disconnect();
