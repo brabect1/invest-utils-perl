@@ -417,9 +417,14 @@ sub getDividend {
 # dividend properties: Symbol, Currency, Amount, Tax, Date. The list is ordered
 # by date.
 #
+# Arguments:
+#   - reference to the open DB connection
+#   - keyed (hash) array of optional arguments
+#     - `syms`: list of symbols for which to get deividends
+#     - `order`: results oredering (allowed: `date` (default), `symbol`)
 sub getDividends {
     my $dbh = shift || return;
-    my $href = shift;
+    my (%args) = @_;
 
 #    my @syms = keys %$href;
 #    if (scalar(@syms) != 0) {
@@ -427,13 +432,18 @@ sub getDividends {
 #        return;
 #    }
 
+    my $order_stmt = ' order by date';
+    if (defined $args{order}) {
+        if ($args{order} eq 'symbol') { $order_stmt = ' order by source_curr'; }
+    }
+
     my $stmt; # SQL statement
     my $sth; # compiled SQL statement handle
     my $rv; # SQL execution return value
 
     # get amounts that directly increase or decrease the balance
     $stmt = qq(select source_curr, unit_curr, amount*unit_price, comm_price, date from xfrs where type='dividend');
-    $stmt .= " order by date;";
+    $stmt .= $order_stmt.";";
     $sth = $dbh->prepare( $stmt );
     $rv = $sth->execute();
     if($rv < 0){
