@@ -5,8 +5,6 @@ use strict;
 use warnings;
 use List::MoreUtils;
 use xfrs;
-use Finance::Math::IRR;
-use Time::Piece;
 use experimental 'smartmatch'; # for using ``if ($var ~~ @array)``
 
 my ($opt, $usage) = describe_options(

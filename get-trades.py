@@ -1,12 +1,33 @@
 import sqlite3
 import sys
 import xfrs
+import argparse
 
 
-db = 'xfrs.sqlite3.db'
-dbh = sqlite3.connect(db)
+parser = argparse.ArgumentParser(
+        description="Pairs the sell transactions to the buy transactions."
+        )
+
+# `db` option: Path to the XFRS database.
+parser.add_argument('-d', '--db', type=str,
+        default='xfrs.sqlite3.db', dest='db',
+        help="Path to the DB file.",
+        )
+
+
+args = parser.parse_args()
+
+dbh = sqlite3.connect(args.db)
 
 stocks = xfrs.getStocks(dbh)
+
+headers = [
+        3 *  ['',] +  ['buy',] + 2 * ['',] + ['sell',] + 2 * ['',],
+        ['Sym', 'Curr', 'Shares',] + 2 * ['Date', 'Price', 'Comm',],
+        ]
+
+for h in headers:
+    print('\t'.join(h))
 
 cursor = dbh.cursor()
 for stock in stocks:
