@@ -66,7 +66,6 @@ def getDividends(dbh, **kwargs):
             ' and '.join(filters) + \
             f') order by {order};'
     cursor = dbh.cursor()
-    print(stmt); #TODO: remove
     cursor.execute(stmt)
 
     dividends = list()
