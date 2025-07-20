@@ -1,22 +1,12 @@
 import sqlite3
 import sys
+import xfrs
 
-def getStocks(dbh):
-
-    stocks = ()
-    if dbh is None: return stocks
-
-    stmt = "SELECT distinct source_curr from xfrs where type in ('sell', 'buy', 'dividend');"
-    cursor = dbh.cursor()
-    cursor.execute(stmt)
-    stocks = [s[0] for s in cursor.fetchall()]
-
-    return stocks
 
 db = 'xfrs.sqlite3.db'
 dbh = sqlite3.connect(db)
 
-stocks = getStocks(dbh)
+stocks = xfrs.getStocks(dbh)
 
 cursor = dbh.cursor()
 for stock in stocks:
