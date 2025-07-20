@@ -4,7 +4,6 @@ use strict;
 use warnings;
 use List::MoreUtils;
 use Array::Utils;
-use Finance::Quote;
 use POSIX;
 
 ## #---->>>> 31-Oct-2017
@@ -1120,38 +1119,45 @@ sub getQuoteStock {
         'currency' => 'currency'
     );
 
-    my $q = Finance::Quote->new;
-    $q->timeout(30);
+    eval "use Finance::Quote";
 
-    # obtain cached quotes
-    my %qtCacheStocks = getCachedQuote($dbh,$date,@syms);
-    foreach my $s (keys %qtCacheStocks) {
-        $quotes{$s} = $qtCacheStocks{$s};
-    }
+    if ($@) {
+        die "Finance::Quote not installed!";
+    } else {
 
-    # obtain additional quotes (if needed) from
-    # - Yahoo finance
-    # - AlphaVantage
-    foreach my $qtSrc ('yahoo_json', 'alphavantage') {
-        if (scalar @syms > scalar keys %quotes) {
-            my @missed;
-            foreach my $s (@syms) {
-                push(@missed,$s) unless (exists($quotes{$s}));
-            }
+        my $q = Finance::Quote->new;
+        $q->timeout(30);
 
-            my %qs = $q->fetch($qtSrc,@missed);
-            foreach my $s (@missed) {
-                next unless (exists($qs{$s,'success'}) && $qs{$s,'success'} == 1);
-                foreach my $a (@attrs) {
-                    if (exists($qs{$s,$a})) {
-                        $quotes{$s}->{$attrMap{$a}} = $qs{$s,$a};
+        # obtain cached quotes
+        my %qtCacheStocks = getCachedQuote($dbh,$date,@syms);
+        foreach my $s (keys %qtCacheStocks) {
+            $quotes{$s} = $qtCacheStocks{$s};
+        }
+
+        # obtain additional quotes (if needed) from
+        # - Yahoo finance
+        # - AlphaVantage
+        foreach my $qtSrc ('yahoo_json', 'alphavantage') {
+            if (scalar @syms > scalar keys %quotes) {
+                my @missed;
+                foreach my $s (@syms) {
+                    push(@missed,$s) unless (exists($quotes{$s}));
+                }
+
+                my %qs = $q->fetch($qtSrc,@missed);
+                foreach my $s (@missed) {
+                    next unless (exists($qs{$s,'success'}) && $qs{$s,'success'} == 1);
+                    foreach my $a (@attrs) {
+                        if (exists($qs{$s,$a})) {
+                            $quotes{$s}->{$attrMap{$a}} = $qs{$s,$a};
+                        }
                     }
                 }
             }
         }
-    }
 
-    return %quotes;
+        return %quotes;
+    }
 }
 
 
@@ -1193,64 +1199,70 @@ sub getQuoteCurrency {
         'currency' => 'currency'
     );
 
-    my $q = Finance::Quote->new;
-    $q->timeout(30);
+    eval "use Finance::Quote";
 
-    # get cached quotes first
-    my @pairs;
-    foreach my $c (@curs) {
-        push(@pairs,$c.$base);
-    }
-    my %qtCacheCurs = xfrs::getCachedQuote($dbh,'',@pairs);
-    foreach my $c (@curs) {
-        if (exists($qtCacheCurs{$c.$base})) {
-            $quotes{$c} = $qtCacheCurs{$c.$base};
+    if ($@) {
+        die "Finance::Quote not installed!";
+    } else {
+        my $q = Finance::Quote->new;
+        $q->timeout(30);
+
+        # get cached quotes first
+        my @pairs;
+        foreach my $c (@curs) {
+            push(@pairs,$c.$base);
         }
-    }
-
-    # quote conversion rates at Yahoo Finance (if needed)
-    if (scalar @curs > scalar keys %quotes) {
-        my %syms;
-        foreach my $s (@curs) {
-            $syms{$s}=$s.$base."=X" unless (exists($quotes{$s}));
+        my %qtCacheCurs = xfrs::getCachedQuote($dbh,'',@pairs);
+        foreach my $c (@curs) {
+            if (exists($qtCacheCurs{$c.$base})) {
+                $quotes{$c} = $qtCacheCurs{$c.$base};
+            }
         }
 
-        my %qs = $q->fetch("yahoo_json",values %syms);
-        foreach my $s (keys %syms) {
-            next unless (exists($qs{$syms{$s},'success'}) && $qs{$syms{$s},'success'} == 1);
+        # quote conversion rates at Yahoo Finance (if needed)
+        if (scalar @curs > scalar keys %quotes) {
+            my %syms;
+            foreach my $s (@curs) {
+                $syms{$s}=$s.$base."=X" unless (exists($quotes{$s}));
+            }
 
-            foreach my $a (@attrs) {
-                if (exists($qs{$syms{$s},$a})) {
-                    $quotes{$s}->{$attrMap{$a}} = $qs{$syms{$s},$a};
+            my %qs = $q->fetch("yahoo_json",values %syms);
+            foreach my $s (keys %syms) {
+                next unless (exists($qs{$syms{$s},'success'}) && $qs{$syms{$s},'success'} == 1);
+
+                foreach my $a (@attrs) {
+                    if (exists($qs{$syms{$s},$a})) {
+                        $quotes{$s}->{$attrMap{$a}} = $qs{$syms{$s},$a};
+                    }
                 }
             }
         }
-    }
 
-    # quote conversion rates (if needed) using the default API (AlphaVantage as of Finance::Quote 1.47)
-    if (scalar @curs > scalar keys %quotes) {
-        my @syms;
-        foreach my $s (@curs) {
-            push(@syms,$s) unless (exists($quotes{$s}));
-        }
+        # quote conversion rates (if needed) using the default API (AlphaVantage as of Finance::Quote 1.47)
+        if (scalar @curs > scalar keys %quotes) {
+            my @syms;
+            foreach my $s (@curs) {
+                push(@syms,$s) unless (exists($quotes{$s}));
+            }
 
-        foreach my $c (@syms) {
-            if ($base eq $c) {
-                $quotes{$c} = {
-                    'price' => 1.0,
-                    'currency' => $c
-                };
-            } else {
-                my $convrate = $q->currency($c,$base);
-                if (! defined $convrate ) { next; }
-                $quotes{$c} = {
-                    'price' => $convrate,
-                    'currency' => $base
-                };
+            foreach my $c (@syms) {
+                if ($base eq $c) {
+                    $quotes{$c} = {
+                        'price' => 1.0,
+                        'currency' => $c
+                    };
+                } else {
+                    my $convrate = $q->currency($c,$base);
+                    if (! defined $convrate ) { next; }
+                    $quotes{$c} = {
+                        'price' => $convrate,
+                        'currency' => $base
+                    };
+                }
             }
         }
+        return %quotes;
     }
-    return %quotes;
 }
 
 
