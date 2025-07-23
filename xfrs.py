@@ -81,3 +81,86 @@ def getDividends(dbh, **kwargs):
             })
 
     return dividends
+
+
+def getBalance(dbh, symbols = None):
+    """Gets the current balance based on the transfers stored in the given DB.
+
+    The routine acts on both stocks and currencies. For stocks it returns the
+    number of securities held, for currencies it returns the remaining cash
+    balance.
+
+    Args:
+      dbh: reference to the open DB connection
+      symbols (list): reference to a hash array to be filled with a balance
+
+    Returns:
+      Dictionary indexed by symbol.
+    """
+
+    if dbh is None: return None
+    cursor = dbh.cursor()
+
+    if symbols is None:
+        symbols = getStocks(dbh)
+
+    balances = dict()
+
+    for s in symbols:
+        balance = 0
+
+        # get amounts that directly increase or decrease the balance
+        # (shall affect only cash balances)
+        stmt = f'select type, amount*unit_price from xfrs where unit_curr=\'{s}\';'
+        cursor.execute(stmt)
+
+        for row in cursor.fetchall():
+            if len(row) < 2: continue
+            if row[0] is None or len(row[0])==0: continue
+
+            if row[0] in ('deposit', 'fx', 'dividend', 'sell'):
+                balance += row[1]
+            elif row[0] in ('buy', 'withdraw'):
+                balance -= row[1]
+            else:
+                print(f"Error: Unknown transaction type: {row[0]}", file=sys.stderr)
+
+        # subtract any conversions where this was a source currency
+        # (shall affect only cash balances)
+        stmt = f'select type, source_price from xfrs where type=\'fx\' and source_curr=\'{s}\';'
+        cursor.execute(stmt)
+
+        for row in cursor.fetchall():
+            if len(row) < 2: continue
+            if row[0] is None or len(row[0])==0: continue
+            balance -= row[1]
+
+        # subtract any commissions
+        # (shall affect only cash balances)
+        stmt = f'select type, sum(comm_price) from xfrs where comm_curr=\'{s}\';'
+        cursor.execute(stmt)
+
+        for row in cursor.fetchall():
+            if len(row) < 2: continue
+            if row[0] is None or len(row[0])==0: continue
+            balance -= row[1]
+
+        # add increases/decreases of stock amount
+        # (shall affect only stock balances)
+        stmt = f'select type, amount from xfrs where type in (\'sell\', \'buy\') and source_curr=\'{s}\';'
+        cursor.execute(stmt)
+
+        for row in cursor.fetchall():
+            if len(row) < 2: continue
+            if row[0] is None or len(row[0])==0: continue
+            if row[0] in ('sell'):
+                balance -= row[1]
+            elif row[0] in ('buy'):
+                balance += row[1]
+            else:
+                print(f"Error: Unknown transaction type: {row[0]}", file=sys.stderr)
+
+        balances[s] = balance
+
+    return balances
+
