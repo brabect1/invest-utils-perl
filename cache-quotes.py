@@ -18,8 +18,14 @@ parser.add_argument('-d', '--db', type=str,
 
 # `base` option: Symbol of the base currency.
 parser.add_argument('-b', '--base', type=str,
-        default='', dest='baseCurrency',
+        default=None, dest='baseCurrency',
         help="Symbol of the base currency.",
+        )
+
+# `symbols` option: Space separated list of stock symbols.
+parser.add_argument('-s', '--symbols', type=str,
+        default=None, dest='symbols',
+        help="Space separated list of stock symbols to quote and cache.",
         )
 
 args = parser.parse_args()
@@ -32,21 +38,18 @@ cursor = dbh.cursor()
 # a one time use.
 date = datetime.datetime.today().strftime("%Y-%m-%d")
 
-## # Test if the 'quotes' table exist, or create otherwise
-## stmt = "SELECT name FROM sqlite_master WHERE type='table' AND name='quotes';" 
-## cursor.execute(stmt)
-## 
-## if len(cursor.fetchall()) == 0:
-##     stmt = 'CREATE TABLE quotes (
-##             id INT PRIMARY KEY,
-##             symbol TEXT NOT NULL,
-##             date TEXT NOT NULL,
-##             price REAL,
-##             curr TEXT);'
-##     cursor.execute(stmt)
+if args.symbols is not None:
+    # use symbols given from command line
+    stocks = args.symbols.split()
+else:
+    # use symbols in XFRS DB
+    stocks = xfrs.getStocks(dbh) or list()
 
+
+# collect stock quotes
+# --------------------
 quotes = {}
-for s in xfrs.getStocks(dbh):
+for s in stocks:
     qs = yfinance.Ticker(s)
     q = { 'regularMarketPrice': None, 'currency': None }
     try:
@@ -56,9 +59,75 @@ for s in xfrs.getStocks(dbh):
     except:
         pass
 
+
+# collect currency quotes
+# -----------------------
+if args.baseCurrency is not None:
+    currencies = set([q['currency'] for q in quotes.values()])
+    #TODO currencies = set(xfrs.getCurrencies(dbh) + [q['currency'] for q in quotes.values()])
+
+    for c in currencies:
+        # skip base currency
+        if c == args.baseCurrency: continue
+
+        s = c + args.baseCurrency + '=X'
+        qs = yfinance.Ticker(s)
+        q = { 'regularMarketPrice': None, 'currency': None }
+        try:
+            for a in q.keys():
+                q[a] = qs.info[a]
+            quotes[c + args.baseCurrency] = {'last': q['regularMarketPrice'], 'currency': q['currency']}
+        except:
+            pass
+
+
+# print quotes
+# --------------
 for s,q in quotes.items():
     print(f'{s}:\t{q["last"]} {q["currency"]}')
 
+
+# update DB
+# ---------
+
+# Test if the 'quotes' table exist, or create otherwise
+stmt = "SELECT name FROM sqlite_master WHERE type='table' AND name='quotes';" 
+cursor.execute(stmt)
+
+if len(cursor.fetchall()) == 0:
+    stmt = '''CREATE TABLE quotes (
+            id INT PRIMARY KEY,
+            symbol TEXT NOT NULL,
+            date TEXT NOT NULL,
+            price REAL,
+            curr TEXT);'''
+    cursor.execute(stmt)
+
+for s,q in quotes.items():
+
+    # query existing DB quotes
+    stmt = f'SELECT * from quotes where date=\'{date}\' AND symbol=\'{s}\';'
+    cursor.execute(stmt)
+
+    if len(cursor.fetchall()) == 0:
+        # no quote yet => create
+        stmt = "INSERT INTO quotes (symbol,date,price,curr) VALUES ("
+        stmt += f'\'{s}\','
+        stmt += f'\'{date}\','
+        stmt += f'\'{quotes[s]["last"]}\','
+        stmt += f'\'{quotes[s]["currency"]}\');'
+    else:
+        # some quote already cached => update
+        stmt = "UPDATE quotes SET "
+        stmt += f'price=\'{quotes[s]["last"]}\''
+        stmt += f', curr=\'{quotes[s]["currency"]}\''
+        stmt += f' where date=\'{date}\' AND symbol=\'{s}\''
+
+    cursor.execute(stmt)
+
+
+# close DB
+# --------
 dbh.commit()
 dbh.close()
 
