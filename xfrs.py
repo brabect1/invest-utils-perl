@@ -1,6 +1,91 @@
 import sqlite3
 import datetime
 
+
+def getSymbols(dbh):
+    """Gets the list of all symbols from the transfers DB, incl. currencies and stocks.
+
+    Args:
+      dbh: reference to the open DB connection
+
+    Returns:
+      an array of symbols
+    """
+
+    if dbh is None: return None
+    cursor = dbh.cursor()
+
+    symbols = set()
+
+    stmt = 'SELECT unit_curr, source_curr, comm_curr from xfrs;'
+    cursor.execute(stmt)
+    for row in cursor.fetchall():
+        if len(row) > 0: symbols.update(row)
+
+    return symbols
+
+
+def getCurrencies(dbh):
+    """Gets the list of currency symbols from DB.
+
+    Args:
+      dbh: reference to the open DB connection
+
+    Returns:
+      a list of (currency) symbols
+    """
+
+    if dbh is None: return None
+    cursor = dbh.cursor()
+
+    currencies = set()
+
+    # get all currencies from currency transactions
+    stmt = 'select source_curr, unit_curr, comm_curr from xfrs where type in (\'deposit\',\'fx\',\'withdraw\');'
+    cursor.execute(stmt)
+    for row in cursor.fetchall():
+        if len(row) > 0: currencies.update(row)
+
+    # get all currencies from stock transactions
+    stmt = 'select unit_curr, comm_curr from xfrs where type in (\'sell\',\'buy\',\'dividend\');'
+    cursor.execute(stmt)
+    for row in cursor.fetchall():
+        if len(row) > 0: currencies.update(row)
+
+    return currencies
+
+def isCurrency(dbh, symbol):
+    """Identifies if a symbol is a currency.
+
+    Args:
+      dbh: reference to the open DB connection
+      symbol (string): symbol to test if represent a currency in DB
+
+    Returns:
+      true if the symbol is a currency defined in the DB, false otherwise
+    """
+
+    if symbol is None: return False
+    if dbh is None: return False
+    cursor = dbh.cursor()
+
+    stmt = 'SELECT count(*) from xfrs where '
+
+    # currency manip records (a currency may act as any of the currency records)
+    stmt += f"(type in ('deposit','fx','withdraw') and"
+    stmt += f" (source_curr='{s}' or unit_curr='{s}' or comm_curr='{s}')"
+    stmt += f")"
+    # stock manip records (a currency may act as a unit or commission currency)
+    stmt += f" or "
+    stmt += f"(type in ('sell','buy','dividend') and (unit_curr='{s}' or comm_curr='{s}'))"
+    # end of the statement
+    stmt += ";"
+
+    cursor.execute(stmt)
+    rows = cursor.fetchall()
+    return len(rows) > 0 and len(rows[0]) > 0 and rows[0][0] > 0
+
+
 def getStocks(dbh):
     """Gets the list of stock symbols.
 
@@ -83,6 +168,157 @@ def getDividends(dbh, **kwargs):
     return dividends
 
 
+def getOnlineQuote(dbh, date, symbols):
+    """Gets the quoted price from Yahoo Finance.
+
+    Arg:
+      dbh: reference to the open DB connection
+      date (str): date of the quote as YYYY-MM-DD string (use None for today)
+      symbols (list): list of symbols to quote
+
+    Returns:
+      Returns a hash indexed by a symbol and for each the following attributes:
+      'price', 'currency' and 'date'.
+    """
+
+    die("not implemented")
+    #TODO foreach my $qtSrc ('yahoo_json', 'alphavantage') {
+    #TODO     if (scalar @syms > scalar keys %quotes) {
+    #TODO         my @missed;
+    #TODO         foreach my $s (@syms) {
+    #TODO             push(@missed,$s) unless (exists($quotes{$s}));
+    #TODO         }
+
+    #TODO         my %qs = $q->fetch($qtSrc,@missed);
+    #TODO         foreach my $s (@missed) {
+    #TODO             next unless (exists($qs{$s,'success'}) && $qs{$s,'success'} == 1);
+    #TODO             foreach my $a (@attrs) {
+    #TODO                 if (exists($qs{$s,$a})) {
+    #TODO                     $quotes{$s}->{$attrMap{$a}} = $qs{$s,$a};
+    #TODO                 }
+    #TODO             }
+    #TODO         }
+    #TODO     }
+    #TODO }
+
+
+def getCachedQuote(dbh, date, symbols):
+    """Gets the cached quoted price from DB.
+
+    Arg:
+      dbh: reference to the open DB connection
+      date (str): date of the quote as YYYY-MM-DD string (use None for today)
+      symbols (list): list of symbols to quote
+
+    Returns:
+      Returns a hash indexed by a symbol and for each the following attributes:
+      'price', 'currency' and 'date'.
+    """
+
+    die("not implemented")
+    #TODO my $dbh = shift || return;
+    #TODO my $date = shift;
+    #TODO my @syms = @_;
+
+    #TODO # get today's date if none given
+    #TODO if (!defined $date || $date eq '') {
+    #TODO     $date = POSIX::strftime("%Y-%m-%d",localtime);
+    #TODO }
+
+    #TODO # see if cached quotes exist
+    #TODO my $sth = $dbh->prepare( "SELECT name FROM sqlite_master WHERE type='table' AND name='quotes';" );
+    #TODO my $rv = $sth->execute();
+    #TODO if($rv < 0) {
+    #TODO     print $DBI::errstr;
+    #TODO     return ();
+    #TODO } else {
+    #TODO     # see if we got some result
+    #TODO     my @row = $sth->fetchrow_array();
+    #TODO     if (scalar @row == 0) {
+    #TODO         return ();
+    #TODO     }
+    #TODO }
+
+    #TODO # get quote for each symbol
+    #TODO my %quotes;
+    #TODO for my $s (@syms) {
+    #TODO     my $stmt = "SELECT price, curr from quotes where date='".$date."' AND symbol='".$s."';";
+    #TODO     my $sth = $dbh->prepare( $stmt );
+    #TODO     my $rv = $sth->execute();
+    #TODO     if($rv < 0) {
+    #TODO         print $DBI::errstr;
+    #TODO         next;
+    #TODO     }
+
+    #TODO     my @row = $sth->fetchrow_array();
+    #TODO     if (scalar @row > 1) {
+    #TODO         $quotes{$s} = {
+    #TODO             'date' => $date,
+    #TODO             'price' => $row[0],
+    #TODO             'currency' => $row[1]
+    #TODO         };
+    #TODO     }
+    #TODO }
+
+    #TODO return %quotes;
+
+
+def getQuoteStock(dbh, date, symbols):
+    """Gets quote for given stock symbols.
+
+    Returns a hash indexed by a symbol and for each the following attributes:
+    'price' and 'currency'.
+
+    Symbols, for which no quote was obtained, will not be included in the returned
+    hash. Detecting if some symbols failed can be done by comparing the number of
+    symbols in the input list and in keys of the output hash.
+
+    Quotes are obtained from the following sources (with decreasing priority):
+    - DB cache
+    - Yahoo Finance
+
+    This routine is somewhat strange for the `xfrs` package, which is intended to provide
+    access routines to an XFRS DB. However, the quotes are needed for the getNAV() routine.
+
+    Separate routines exist for stocks and currencies as the API to get real-time quotes
+    is different.
+
+    Arg:
+      dbh: reference to the open DB connection
+      date (str): date of the quote as YYYY-MM-DD string (use None for today)
+      symbols (list): list of symbols to quote
+
+    Returns:
+      Returns a hash indexed by a symbol and for each the following attributes:
+      'price' and 'currency'.
+    """
+
+    if dbh is None: return None
+    if symbols is None or len(symbols) == 0: None
+
+    if date is None:
+        date = datetime.datetime.today().strftime("%Y-%m-%d")
+
+    quotes = dict()
+
+    attrs = ["last", "currency"]
+    attrMap = {
+            'last': 'price',
+            'currency': 'currency'
+            }
+
+
+    # obtain cached quotes
+    quotes += getCachedQuote(dbh, date, symbols)
+
+    # obtain additional quotes (if needed) from Yahoo finance
+    symbols = [s for s in symbols if s not in quotes]
+    if len(symbols) > 0:
+        quotes += getOnlineQuote(dbh, date, symbols)
+
+    return quotes
+
+
 def getBalance(dbh, symbols = None):
     """Gets the current balance based on the transfers stored in the given DB.
 
@@ -102,7 +338,7 @@ def getBalance(dbh, symbols = None):
     cursor = dbh.cursor()
 
     if symbols is None:
-        symbols = getStocks(dbh)
+        symbols = getSymbols(dbh)
 
     balances = dict()
 
@@ -163,4 +399,57 @@ def getBalance(dbh, symbols = None):
         balances[s] = balance
 
     return balances
+
+
+def getNAV(dbh, symbols):
+    """Gets the net asset value (NAV) for the given symbols.
+
+    The NAV value is returned with indication of the currency (e.g. 30.25USD).
+
+    NAV is computed as the number of remaining shares (as returned by getBalance())
+    times the present share value. As such it represent the actual value of
+    a position.
+
+    No commissions are involved in NAV. The commissions rather apply for analyzing
+    a gain or invested amount.
+
+    Args:
+      dbh: reference to the open DB connection
+      symbols (list): list of tickers for which to calculate NAV,
+                      if ``None`` then all symbols in DB apply
+
+    Returns:
+      Dictionary indexed by symbols and values representing each symbol's NAV.
+    """
+
+    if dbh is None: return None
+    cursor = dbh.cursor()
+
+    if symbols is None:
+        symbols = getSymbols(dbh)
+
+    balances = getBallance(dbh, symbols)
+    if balances is None: return None
+
+    currencies = getCurrencies(dbh)
+    stocks = getStocks(dbh)
+
+    navs = dict()
+    for s in symbols:
+        if s in currencies:
+            navs[s] = '???' if s not in balances else balances[s]
+        elif s in stocks:
+            die("not implemented")
+            #TODO # get quote (to compute the actual NAV)
+            #TODO my $nav='';
+            #TODO my %qs  = getQuoteStock($dbh,'',$s);
+            #TODO if (exists($qs{$s})) {
+            #TODO     $nav = ($qs{$s}->{'price'} * $href->{$s}).$qs{$s}->{'currency'};
+            #TODO }
+
+            #TODO $href->{$s} =  ($nav eq '')  ? $href->{$s}."???" : $nav;
+        else
+        navs[s] = '???'
+
+    return navs
 
