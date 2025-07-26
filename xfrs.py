@@ -1,5 +1,6 @@
 import sqlite3
 import datetime
+import yfinance
 
 
 def getSymbols(dbh):
@@ -73,11 +74,11 @@ def isCurrency(dbh, symbol):
 
     # currency manip records (a currency may act as any of the currency records)
     stmt += f"(type in ('deposit','fx','withdraw') and"
-    stmt += f" (source_curr='{s}' or unit_curr='{s}' or comm_curr='{s}')"
+    stmt += f" (source_curr='{symbol}' or unit_curr='{symbol}' or comm_curr='{symbol}')"
     stmt += f")"
     # stock manip records (a currency may act as a unit or commission currency)
     stmt += f" or "
-    stmt += f"(type in ('sell','buy','dividend') and (unit_curr='{s}' or comm_curr='{s}'))"
+    stmt += f"(type in ('sell','buy','dividend') and (unit_curr='{symbol}' or comm_curr='{symbol}'))"
     # end of the statement
     stmt += ";"
 
@@ -106,6 +107,28 @@ def getStocks(dbh):
     return stocks
 
 
+def isStock(dbh, symbol):
+    """Identifies if a symbol is a stock symbol.
+
+    Args:
+      dbh: reference to the open DB connection
+      symbol (str): stock ticker
+
+    Returns:
+      true is the symbol is a stock symbol defined in the DB, false otherwise
+    """
+
+    if symbol is None: return False
+    if dbh is None: return False
+    cursor = dbh.cursor()
+
+    stmt = f'SELECT count(*) from xfrs where type in (\'sell\', \'buy\', \'dividend\') and source_curr=\'{symbol}\';'
+
+    cursor.execute(stmt)
+    rows = cursor.fetchall()
+    return len(rows) > 0 and len(rows[0]) > 0 and rows[0][0] > 0
+
+
 def getDividends(dbh, **kwargs):
     """Gets a list of dividends, either all or those limited to a symbol subset.
     
@@ -116,6 +139,7 @@ def getDividends(dbh, **kwargs):
       syms (list): list of symbols for which to get deividends
       order (str): results oredering (allowed: ``date`` (default), ``symbol``)
       fromDate (str): YYYY-MM-DD formatted date from which onwards to get dividends
+      toDate (str): YYYY-MM-DD formatted latest date by which to get dividends
 
     Returns:
       list: The return value is a list of records, where each record is a hash array of
@@ -131,7 +155,7 @@ def getDividends(dbh, **kwargs):
 
     filters = ['type=\'dividend\'']
 
-    if 'fromDate' in kwargs:
+    if 'fromDate' in kwargs and kwargs['fromDate'] is not None:
         try:
             d = datetime.datetime.strptime(kwargs["fromDate"], '%Y-%m-%d')
             filters.append(f'date>=\'{d.strftime("%Y-%m-%d")}\'')
@@ -139,7 +163,7 @@ def getDividends(dbh, **kwargs):
             # ignore wrong argument
             pass
 
-    if 'toDate' in kwargs:
+    if 'toDate' in kwargs and kwargs['toDate'] is not None:
         try:
             d = datetime.datetime.strptime(kwargs["toDate"], '%Y-%m-%d')
             filters.append(f'date<=\'{d.strftime("%Y-%m-%d")}\'')
@@ -168,38 +192,116 @@ def getDividends(dbh, **kwargs):
     return dividends
 
 
-def getOnlineQuote(dbh, date, symbols):
+def cacheQuote(dbh, symbol, quote):
+    """Adds a cached quote to DB.
+
+    A *quote* is simply a price for a unit of a stock or currency. We cache
+    quotes to avoid querying online quote sources, which may come with some
+    delay (of querying the source and getting response) and maybe restrictions
+    on the source side (e.g. how many quotes we may place, how often, etc.).
+
+    Cached quotes are simply another table in DB. Quotes are cahed only
+    explicitly through `addCahedQuote()`.
+
+    Args:
+      dbh: reference to the open DB connection
+      symbol (str): ticker of the stock or currency
+      quote (dict): hash array of quote attributes; the attributes
+                    are ``date`, `price` and `currency`;
+                    all but `date` (which defaults to the current date) are mandatory
+    """
+
+    if dbh is None or symbol is None or quote is None: return
+    for attr in ['price', 'currency']:
+        if attr not in quote or quote[attr] is None: return
+
+    if 'date' not in quote:
+        date = datetime.date.today().strftime("%Y-%m-%d")
+    else:
+        date = quote['date']
+
+    # Test if the 'quotes' table exist, or create otherwise
+    stmt = "SELECT name FROM sqlite_master WHERE type='table' AND name='quotes';" 
+    cursor.execute(stmt)
+
+    if len(cursor.fetchall()) == 0:
+        stmt = '''CREATE TABLE quotes (
+                id INT PRIMARY KEY,
+                symbol TEXT NOT NULL,
+                date TEXT NOT NULL,
+                price REAL,
+                curr TEXT);'''
+        cursor.execute(stmt)
+
+    # query existing DB quotes
+    stmt = f'SELECT * from quotes where date=\'{date}\' AND symbol=\'{symbol}\';'
+    cursor.execute(stmt)
+
+    if len(cursor.fetchall()) == 0:
+        # no quote yet => create
+        stmt = "INSERT INTO quotes (symbol,date,price,curr) VALUES ("
+        stmt += f'\'{symbol}\','
+        stmt += f'\'{date}\','
+        stmt += f'\'{quote["price"]}\','
+        stmt += f'\'{quote["currency"]}\');'
+    else:
+        # some quote already cached => update
+        stmt = "UPDATE quotes SET "
+        stmt += f'price=\'{quotes["price"]}\''
+        stmt += f', curr=\'{quotes["currency"]}\''
+        stmt += f' where date=\'{date}\' AND symbol=\'{symbol}\''
+
+    cursor.execute(stmt)
+    dbh.commit()
+
+
+def getOnlineQuote(symbols, **kwargs):
     """Gets the quoted price from Yahoo Finance.
 
-    Arg:
-      dbh: reference to the open DB connection
+    Args:
       date (str): date of the quote as YYYY-MM-DD string (use None for today)
       symbols (list): list of symbols to quote
+
+    Kwargs:
+      date (str): YYYY-MM-DD formatted date on which to get the quote
+      dbh: reference to the open DB connection
+      cache (bool): when true the quote will get cached into DB, if `dbh` handle provided
 
     Returns:
       Returns a hash indexed by a symbol and for each the following attributes:
       'price', 'currency' and 'date'.
     """
 
-    die("not implemented")
-    #TODO foreach my $qtSrc ('yahoo_json', 'alphavantage') {
-    #TODO     if (scalar @syms > scalar keys %quotes) {
-    #TODO         my @missed;
-    #TODO         foreach my $s (@syms) {
-    #TODO             push(@missed,$s) unless (exists($quotes{$s}));
-    #TODO         }
+    quotes = dict()
+    if symbols is None or len(symbols) == 0: return quotes
 
-    #TODO         my %qs = $q->fetch($qtSrc,@missed);
-    #TODO         foreach my $s (@missed) {
-    #TODO             next unless (exists($qs{$s,'success'}) && $qs{$s,'success'} == 1);
-    #TODO             foreach my $a (@attrs) {
-    #TODO                 if (exists($qs{$s,$a})) {
-    #TODO                     $quotes{$s}->{$attrMap{$a}} = $qs{$s,$a};
-    #TODO                 }
-    #TODO             }
-    #TODO         }
-    #TODO     }
-    #TODO }
+    # date of `None` means today
+    date = None
+    if 'date' in kwargs and kwargs['date'] is not None:
+        date = datetime.datetime.strptime(kwargs['date'], "%Y-%m-%d").date()
+        today = datetime.date.today()
+        if date > today: return quotes
+        elif date == today: date = None
+
+    for s in symbols:
+        qs = yfinance.Ticker(s)
+        q = { 'regularMarketPrice': None, 'currency': None }
+        try:
+            if date is None:
+                for a in q.keys():
+                    q[a] = qs.info[a]
+            else:
+                continue
+            quotes[s] = {'price': q['regularMarketPrice'], 'currency': q['currency']}
+        except:
+            pass
+
+    if 'cache' in kwargs and kwargs['cache']:
+        if 'dbh' in kwargs and kwargs['dbh'] is not None:
+            for k, v in quotes.items():
+                cacheQuote(kwargs['dbh'], k, v)
+
+    return quotes
 
 
 def getCachedQuote(dbh, date, symbols):
@@ -297,7 +399,7 @@ def getQuoteStock(dbh, date, symbols):
     if symbols is None or len(symbols) == 0: None
 
     if date is None:
-        date = datetime.datetime.today().strftime("%Y-%m-%d")
+        date = datetime.date.today().strftime("%Y-%m-%d")
 
     quotes = dict()
 
@@ -448,8 +550,8 @@ def getNAV(dbh, symbols):
             #TODO }
 
             #TODO $href->{$s} =  ($nav eq '')  ? $href->{$s}."???" : $nav;
-        else
-        navs[s] = '???'
+        else:
+            navs[s] = '???'
 
     return navs
 
