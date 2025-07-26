@@ -215,6 +215,8 @@ def cacheQuote(dbh, symbol, quote):
     for attr in ['price', 'currency']:
         if attr not in quote or quote[attr] is None: return
 
+    cursor = dbh.cursor()
+
     if 'date' not in quote:
         date = datetime.date.today().strftime("%Y-%m-%d")
     else:
@@ -229,6 +231,7 @@ def cacheQuote(dbh, symbol, quote):
                 id INT PRIMARY KEY,
                 symbol TEXT NOT NULL,
                 date TEXT NOT NULL,
+                type TEXT NOT NULL,
                 price REAL,
                 curr TEXT);'''
         cursor.execute(stmt)
@@ -237,18 +240,21 @@ def cacheQuote(dbh, symbol, quote):
     stmt = f'SELECT * from quotes where date=\'{date}\' AND symbol=\'{symbol}\';'
     cursor.execute(stmt)
 
+    priceType = 'real' if 'type' not in quote else quote['type']
     if len(cursor.fetchall()) == 0:
         # no quote yet => create
-        stmt = "INSERT INTO quotes (symbol,date,price,curr) VALUES ("
+        stmt = "INSERT INTO quotes (symbol,date,type,price,curr) VALUES ("
         stmt += f'\'{symbol}\','
         stmt += f'\'{date}\','
+        stmt += f'\'{priceType}\','
         stmt += f'\'{quote["price"]}\','
         stmt += f'\'{quote["currency"]}\');'
     else:
         # some quote already cached => update
         stmt = "UPDATE quotes SET "
-        stmt += f'price=\'{quotes["price"]}\''
-        stmt += f', curr=\'{quotes["currency"]}\''
+        stmt += f'type=\'{priceType}\''
+        stmt += f', price=\'{quote["price"]}\''
+        stmt += f', curr=\'{quote["currency"]}\''
         stmt += f' where date=\'{date}\' AND symbol=\'{symbol}\''
 
     cursor.execute(stmt)
@@ -259,7 +265,6 @@ def getOnlineQuote(symbols, **kwargs):
     """Gets the quoted price from Yahoo Finance.
 
     Args:
-      date (str): date of the quote as YYYY-MM-DD string (use None for today)
       symbols (list): list of symbols to quote
 
     Kwargs:
@@ -277,92 +282,129 @@ def getOnlineQuote(symbols, **kwargs):
 
     # date of `None` means today
     date = None
+    today = datetime.date.today()
     if 'date' in kwargs and kwargs['date'] is not None:
         date = datetime.datetime.strptime(kwargs['date'], "%Y-%m-%d").date()
-        today = datetime.date.today()
         if date > today: return quotes
         elif date == today: date = None
 
+    stoday = today.strftime('%Y-%m-%d')
+    lquotes = list()
     for s in symbols:
         qs = yfinance.Ticker(s)
-        q = { 'regularMarketPrice': None, 'currency': None }
+        q = { 'regularMarketPrice': None, 'currency': None}
         try:
             if date is None:
                 for a in q.keys():
                     q[a] = qs.info[a]
+                lquotes.append({
+                        'symbol': s,
+                        'price': q['regularMarketPrice'],
+                        'currency': q['currency'],
+                        'date': stoday,
+                        'type': 'real',
+                        })
             else:
-                continue
-            quotes[s] = {'price': q['regularMarketPrice'], 'currency': q['currency']}
+                # use `end=date+1` as the `history()` method does not include the end date
+                # use `start=date-7` to span potential weekend and holiday days
+                df = qs.history(start=date - datetime.timedelta(days=7), end=date + datetime.timedelta(days=1)).tail(1)
+
+                # currency
+                curr = qs.info['currency']
+
+                # close price
+                price = df['Close'].tolist()[0]
+
+                # close date
+                cdate = df.index[0].to_pydatetime().date()
+
+                for d in [cdate, date]:
+                    lquotes.append({
+                            'symbol': s,
+                            'price': price,
+                            'currency': curr,
+                            'date': d.strftime('%Y-%m-%d'),
+                            'type': 'close',
+                            })
+
         except:
             pass
 
     if 'cache' in kwargs and kwargs['cache']:
         if 'dbh' in kwargs and kwargs['dbh'] is not None:
-            for k, v in quotes.items():
-                cacheQuote(kwargs['dbh'], k, v)
+            for q in lquotes:
+                cacheQuote(kwargs['dbh'], q['symbol'], q)
+
+    for q in lquotes:
+        if q['symbol'] not in quotes: quotes[q['symbol']] = q
 
     return quotes
 
 
-def getCachedQuote(dbh, date, symbols):
+def getCachedQuote(dbh, symbols, **kwargs):
     """Gets the cached quoted price from DB.
 
-    Arg:
+    Args:
       dbh: reference to the open DB connection
-      date (str): date of the quote as YYYY-MM-DD string (use None for today)
       symbols (list): list of symbols to quote
+
+    Kwargs:
+      date (str): YYYY-MM-DD formatted date on which to get the quote (use None for today)
+      online (bool): when true and not cached, fallback on online quote and cache it
 
     Returns:
       Returns a hash indexed by a symbol and for each the following attributes:
       'price', 'currency' and 'date'.
     """
 
-    die("not implemented")
-    #TODO my $dbh = shift || return;
-    #TODO my $date = shift;
-    #TODO my @syms = @_;
+    if dbh is None: return None
 
-    #TODO # get today's date if none given
-    #TODO if (!defined $date || $date eq '') {
-    #TODO     $date = POSIX::strftime("%Y-%m-%d",localtime);
-    #TODO }
+    quotes = dict()
+    if symbols is None or len(symbols) == 0: return quotes
 
-    #TODO # see if cached quotes exist
-    #TODO my $sth = $dbh->prepare( "SELECT name FROM sqlite_master WHERE type='table' AND name='quotes';" );
-    #TODO my $rv = $sth->execute();
-    #TODO if($rv < 0) {
-    #TODO     print $DBI::errstr;
-    #TODO     return ();
-    #TODO } else {
-    #TODO     # see if we got some result
-    #TODO     my @row = $sth->fetchrow_array();
-    #TODO     if (scalar @row == 0) {
-    #TODO         return ();
-    #TODO     }
-    #TODO }
+    today = datetime.date.today()
+    date = today
+    if 'date' in kwargs and kwargs['date'] is not None:
+        date = datetime.datetime.strptime(kwargs['date'], "%Y-%m-%d").date()
+        if date > today: return quotes
 
-    #TODO # get quote for each symbol
-    #TODO my %quotes;
-    #TODO for my $s (@syms) {
-    #TODO     my $stmt = "SELECT price, curr from quotes where date='".$date."' AND symbol='".$s."';";
-    #TODO     my $sth = $dbh->prepare( $stmt );
-    #TODO     my $rv = $sth->execute();
-    #TODO     if($rv < 0) {
-    #TODO         print $DBI::errstr;
-    #TODO         next;
-    #TODO     }
+    sdate = date.strftime('%Y-%m-%d')
+    cursor = dbh.cursor()
 
-    #TODO     my @row = $sth->fetchrow_array();
-    #TODO     if (scalar @row > 1) {
-    #TODO         $quotes{$s} = {
-    #TODO             'date' => $date,
-    #TODO             'price' => $row[0],
-    #TODO             'currency' => $row[1]
-    #TODO         };
-    #TODO     }
-    #TODO }
+    # Test if the 'quotes' table exist, or create otherwise
+    stmt = "SELECT name FROM sqlite_master WHERE type='table' AND name='quotes';"
+    cursor.execute(stmt)
 
-    #TODO return %quotes;
+    cacheExists = len(cursor.fetchall()) > 0
+    fallbackOnline = 'online' in kwargs and kwargs['online']
+
+    # return empty result if no cache and no falling back online
+    if not cacheExists and not fallbackOnline: return quotes
+
+    # query existing DB quotes
+    if cacheExists:
+        for s in symbols:
+            stmt = f'SELECT price, curr, type from quotes where date=\'{date}\' AND symbol=\'{s}\';'
+            cursor.execute(stmt)
+            rows = cursor.fetchall()
+            if len(rows) > 0:
+                quotes[s] = {
+                        'symbol': s,
+                        'price': rows[0][0],
+                        'currency': rows[0][1],
+                        'date': sdate,
+                        'type': rows[0][2],
+                        }
+
+    # falling back online for missing symbols
+    if fallbackOnline and len(symbols) > len(quotes.keys()):
+        onlineQuotes = getOnlineQuote(
+                [s for s in symbols if s not in quotes],
+                dbh = dbh, date = sdate, cache = True
+                )
+        quotes.update(onlineQuotes)
+
+    return quotes
 
 
 def getQuoteStock(dbh, date, symbols):
@@ -403,20 +445,20 @@ def getQuoteStock(dbh, date, symbols):
 
     quotes = dict()
 
-    attrs = ["last", "currency"]
-    attrMap = {
-            'last': 'price',
-            'currency': 'currency'
-            }
+    #TODO:remove? attrs = ["last", "currency"]
+    #TODO:remove? attrMap = {
+    #TODO:remove?         'last': 'price',
+    #TODO:remove?         'currency': 'currency'
+    #TODO:remove?         }
 
 
     # obtain cached quotes
-    quotes += getCachedQuote(dbh, date, symbols)
+    quotes.update(getCachedQuote(dbh, symbols, date = date))
 
     # obtain additional quotes (if needed) from Yahoo finance
     symbols = [s for s in symbols if s not in quotes]
     if len(symbols) > 0:
-        quotes += getOnlineQuote(dbh, date, symbols)
+        quotes.update(getOnlineQuote(symbols, date = date))
 
     return quotes
 

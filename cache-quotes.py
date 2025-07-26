@@ -36,7 +36,7 @@ cursor = dbh.cursor()
 # Capture present date. We will cache one quote per day as the whole
 # utils package is not meant for realtime monitoring but rather for
 # a one time use.
-date = datetime.datetime.today().strftime("%Y-%m-%d")
+date = datetime.date.today().strftime("%Y-%m-%d")
 
 if args.symbols is not None:
     # use symbols given from command line
@@ -55,7 +55,7 @@ for s in stocks:
     try:
         for a in q.keys():
             q[a] = qs.info[a]
-        quotes[s] = {'last': q['regularMarketPrice'], 'currency': q['currency']}
+        quotes[s] = {'price': q['regularMarketPrice'], 'currency': q['currency']}
     except:
         pass
 
@@ -76,7 +76,7 @@ if args.baseCurrency is not None:
         try:
             for a in q.keys():
                 q[a] = qs.info[a]
-            quotes[c + args.baseCurrency] = {'last': q['regularMarketPrice'], 'currency': q['currency']}
+            quotes[c + args.baseCurrency] = {'price': q['regularMarketPrice'], 'currency': q['currency']}
         except:
             pass
 
@@ -84,46 +84,13 @@ if args.baseCurrency is not None:
 # print quotes
 # --------------
 for s,q in quotes.items():
-    print(f'{s}:\t{q["last"]} {q["currency"]}')
+    print(f'{s}:\t{q["price"]} {q["currency"]}')
 
 
 # update DB
 # ---------
-
-# Test if the 'quotes' table exist, or create otherwise
-stmt = "SELECT name FROM sqlite_master WHERE type='table' AND name='quotes';" 
-cursor.execute(stmt)
-
-if len(cursor.fetchall()) == 0:
-    stmt = '''CREATE TABLE quotes (
-            id INT PRIMARY KEY,
-            symbol TEXT NOT NULL,
-            date TEXT NOT NULL,
-            price REAL,
-            curr TEXT);'''
-    cursor.execute(stmt)
-
 for s,q in quotes.items():
-
-    # query existing DB quotes
-    stmt = f'SELECT * from quotes where date=\'{date}\' AND symbol=\'{s}\';'
-    cursor.execute(stmt)
-
-    if len(cursor.fetchall()) == 0:
-        # no quote yet => create
-        stmt = "INSERT INTO quotes (symbol,date,price,curr) VALUES ("
-        stmt += f'\'{s}\','
-        stmt += f'\'{date}\','
-        stmt += f'\'{quotes[s]["last"]}\','
-        stmt += f'\'{quotes[s]["currency"]}\');'
-    else:
-        # some quote already cached => update
-        stmt = "UPDATE quotes SET "
-        stmt += f'price=\'{quotes[s]["last"]}\''
-        stmt += f', curr=\'{quotes[s]["currency"]}\''
-        stmt += f' where date=\'{date}\' AND symbol=\'{s}\''
-
-    cursor.execute(stmt)
+    xfrs.cacheQuote(dbh, s, q)
 
 
 # close DB
