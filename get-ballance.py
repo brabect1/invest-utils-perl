@@ -37,26 +37,71 @@ cursor = dbh.cursor()
 # ------------
 balance = dict()
 nav = dict()
-symbols = xfrs.getStocks(dbh)
-#TODO symbols = xfrs.getSymbols(dbh)
 
-balance = xfrs.getBalance(dbh, symbols)
-#TODO nav = xfrs.getNAV(dbh, symbols)
+if args.symbols is not None:
+    symbols = args.symbols.split()
+else:
+    symbols = xfrs.getSymbols(dbh)
 
-#TODO # Report cash balance
-#TODO # --------------------
-#TODO print "# Currencies\n";
-#TODO my @currencies = xfrs::getCurrencies($dbh);
-#TODO foreach my $s (@currencies) {
-#TODO     print "\t$s = $balance{$s}\n";
-#TODO }
+currencies = xfrs.getCurrencies(dbh)
+stocks = xfrs.getStocks(dbh)
+
+balance = xfrs.getBalance(dbh, list(symbols) + list(currencies))
+nav = xfrs.getNAV(dbh, symbols)
+
+
+# Report cash balance
+# --------------------
+print("# Currencies")
+for s in sorted(currencies):
+    print(f'\t{s} = {balance.get(s,0):,.2f}')
 
 
 # Report stock balance
 # ---------------------
 print("# Stocks (in units)")
-for s in xfrs.getStocks(dbh):
+for s in sorted(symbols):
     print(f"\t{s} = {balance.get(s, None)} ({nav.get(s, None)})")
+
+
+# Report total NAV per currency
+# -----------------------------
+# initialize with cash balance
+totals = {s: balance[s] for s in currencies}
+
+# add NAV of all stocks
+for s in symbols:
+    vals = nav[s].split()
+    if len(vals) > 1:
+        totals[vals[1]] = totals.get(vals[1], 0) + float(vals[0])
+
+# report
+print("# Total NAV")
+for s in sorted(totals.keys()):
+    print(f'\t{s} = {totals[s]:,.2f}')
+
+
+#TODO # Report total of totals NAV (in a base currency)
+#TODO # -----------------------------------------------
+#TODO if ($opt->base ne "") {
+#TODO     my $total = 0;
+#TODO     my $base = $opt->base;
+#TODO     print "# Total NAV ($base)\n";
+#TODO     foreach my $s (keys %totals) {
+#TODO         if ($s eq $base) {
+#TODO             $total += $totals{$s};
+#TODO         } else {
+#TODO             # query the conversion rate
+#TODO             my %qs = xfrs::getQuoteCurrency($dbh,'',$base,$s);
+#TODO             if (exists($qs{$s})) {
+#TODO                 $total += $totals{$s} * $qs{$s}->{'price'};
+#TODO             } else {
+#TODO                 print "Error: Failed to obtain conversion rate $s to $base!\n";
+#TODO             }
+#TODO         }
+#TODO     }
+#TODO     print "\t$base = $total\n";
+
 
 # close DB
 # --------

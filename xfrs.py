@@ -463,6 +463,120 @@ def getQuoteStock(dbh, date, symbols):
     return quotes
 
 
+def getQuoteCurrency(dbh, date, symbols):
+    """Gets quote for given currencies to the base one.
+
+    Returns a hash indexed by a symbol and for each the following attributes:
+    'price' and 'currency'.
+
+    Symbols, for which no quote was obtained, will not be included in the returned
+    hash. Detecting if some symbols failed can be done by comparing the number of
+    symbols in the input list and in keys of the output hash.
+
+    Quotes are obtained from the following sources (with decreasing priority):
+    - DB cache
+    - Yahoo Finance
+
+    This routine is somewhat strange for the `xfrs` package, which is intended to provide
+    access routines to an XFRS DB. However, the quotes are needed for the getNAV() routine.
+
+    Separate routines exist for stocks and currencies as the API to get real-time quotes
+    is different.
+
+    Args:
+      dbh: reference to the open DB connection
+      date (str): date of the quote as YYYY-MM-DD string (use None for today)
+      symbols (list): list of currency symbols to quote, where the first acts as the base
+                      (example: a list of `EUR`,`USD`,`CAD` will quote `USDEUR` and `CADEUR` pairs)
+
+    Returns:
+      Returns a hash indexed by a symbol and for each the following attributes:
+      'price' and 'currency'.
+    """
+
+    if dbh is None: return None
+    if symbols is None or len(symbols) <= 1: None
+
+    if date is None:
+        date = datetime.date.today().strftime("%Y-%m-%d")
+
+    quotes = dict()
+
+    #TODO my %quotes;
+    #TODO my @attrs = ("last","currency");
+    #TODO my %attrMap = (
+    #TODO     'last' => 'price',
+    #TODO     'currency' => 'currency'
+    #TODO );
+
+    #TODO eval "use Finance::Quote";
+
+    #TODO if ($@) {
+    #TODO     die "Finance::Quote not installed!";
+    #TODO } else {
+    #TODO     my $q = Finance::Quote->new;
+    #TODO     $q->timeout(30);
+
+    #TODO     # get cached quotes first
+    #TODO     my @pairs;
+    #TODO     foreach my $c (@curs) {
+    #TODO         push(@pairs,$c.$base);
+    #TODO     }
+    #TODO     my %qtCacheCurs = xfrs::getCachedQuote($dbh,'',@pairs);
+    #TODO     foreach my $c (@curs) {
+    #TODO         if (exists($qtCacheCurs{$c.$base})) {
+    #TODO             $quotes{$c} = $qtCacheCurs{$c.$base};
+    #TODO         }
+    #TODO     }
+
+    #TODO     # quote conversion rates at Yahoo Finance (if needed)
+    #TODO     if (scalar @curs > scalar keys %quotes) {
+    #TODO         my %syms;
+    #TODO         foreach my $s (@curs) {
+    #TODO             $syms{$s}=$s.$base."=X" unless (exists($quotes{$s}));
+    #TODO         }
+
+    #TODO         my %qs = $q->fetch("yahoo_json",values %syms);
+    #TODO         foreach my $s (keys %syms) {
+    #TODO             next unless (exists($qs{$syms{$s},'success'}) && $qs{$syms{$s},'success'} == 1);
+
+    #TODO             foreach my $a (@attrs) {
+    #TODO                 if (exists($qs{$syms{$s},$a})) {
+    #TODO                     $quotes{$s}->{$attrMap{$a}} = $qs{$syms{$s},$a};
+    #TODO                 }
+    #TODO             }
+    #TODO         }
+    #TODO     }
+
+    #TODO     # quote conversion rates (if needed) using the default API (AlphaVantage as of Finance::Quote 1.47)
+    #TODO     if (scalar @curs > scalar keys %quotes) {
+    #TODO         my @syms;
+    #TODO         foreach my $s (@curs) {
+    #TODO             push(@syms,$s) unless (exists($quotes{$s}));
+    #TODO         }
+
+    #TODO         foreach my $c (@syms) {
+    #TODO             if ($base eq $c) {
+    #TODO                 $quotes{$c} = {
+    #TODO                     'price' => 1.0,
+    #TODO                     'currency' => $c
+    #TODO                 };
+    #TODO             } else {
+    #TODO                 my $convrate = $q->currency($c,$base);
+    #TODO                 if (! defined $convrate ) { next; }
+    #TODO                 $quotes{$c} = {
+    #TODO                     'price' => $convrate,
+    #TODO                     'currency' => $base
+    #TODO                 };
+    #TODO             }
+    #TODO         }
+    #TODO     }
+    #TODO     return %quotes;
+    #TODO }
+
+    return quotes
+
+
 def getBalance(dbh, symbols = None):
     """Gets the current balance based on the transfers stored in the given DB.
 
@@ -572,28 +686,29 @@ def getNAV(dbh, symbols):
     if symbols is None:
         symbols = getSymbols(dbh)
 
-    balances = getBallance(dbh, symbols)
+    balances = getBalance(dbh, symbols)
     if balances is None: return None
 
     currencies = getCurrencies(dbh)
     stocks = getStocks(dbh)
 
+    date = datetime.date.today().strftime("%Y-%m-%d")
     navs = dict()
-    for s in symbols:
-        if s in currencies:
-            navs[s] = '???' if s not in balances else balances[s]
-        elif s in stocks:
-            die("not implemented")
-            #TODO # get quote (to compute the actual NAV)
-            #TODO my $nav='';
-            #TODO my %qs  = getQuoteStock($dbh,'',$s);
-            #TODO if (exists($qs{$s})) {
-            #TODO     $nav = ($qs{$s}->{'price'} * $href->{$s}).$qs{$s}->{'currency'};
-            #TODO }
 
-            #TODO $href->{$s} =  ($nav eq '')  ? $href->{$s}."???" : $nav;
+    # currencies
+    for s in [s for s in symbols if s in currencies]:
+        navs[s] = ('0 ' if s not in balances else f'{balances[s]:.2f} ') + s
+
+    # stocks
+    quotes = getQuoteStock(dbh, date, [s for s in symbols if s in stocks])
+    for s, q in quotes.items():
+        if s in balances:
+            navs[s] = f'{q["price"] * balances[s]:.2f} {q["currency"]}'
         else:
-            navs[s] = '???'
+            navs[s] = f'0 {q["currency"]}'
+
+    # undetermined
+    navs.update({s: '???' for s in symbols if s not in navs})
 
     return navs
 
