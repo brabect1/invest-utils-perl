@@ -500,79 +500,20 @@ def getQuoteCurrency(dbh, date, symbols):
     if date is None:
         date = datetime.date.today().strftime("%Y-%m-%d")
 
-    quotes = dict()
+    base = symbols.pop(0)
+    pairs = list({s + base for s in symbols if s != base})
 
-    #TODO my %quotes;
-    #TODO my @attrs = ("last","currency");
-    #TODO my %attrMap = (
-    #TODO     'last' => 'price',
-    #TODO     'currency' => 'currency'
-    #TODO );
+    # get cached quotes first
+    quotes = getCachedQuote(dbh, pairs, date = date)
 
-    #TODO eval "use Finance::Quote";
+    # quote conversion rates at Yahoo Finance (if needed)
+    if len(pairs) > len(quotes.keys()):
+        rates = getOnlineQuote([s + '=X' for s in pairs if s not in quotes], date = date)
+        quotes.update({k[:-2]: v for k, v in rates.items()})
 
-    #TODO if ($@) {
-    #TODO     die "Finance::Quote not installed!";
-    #TODO } else {
-    #TODO     my $q = Finance::Quote->new;
-    #TODO     $q->timeout(30);
-
-    #TODO     # get cached quotes first
-    #TODO     my @pairs;
-    #TODO     foreach my $c (@curs) {
-    #TODO         push(@pairs,$c.$base);
-    #TODO     }
-    #TODO     my %qtCacheCurs = xfrs::getCachedQuote($dbh,'',@pairs);
-    #TODO     foreach my $c (@curs) {
-    #TODO         if (exists($qtCacheCurs{$c.$base})) {
-    #TODO             $quotes{$c} = $qtCacheCurs{$c.$base};
-    #TODO         }
-    #TODO     }
-
-    #TODO     # quote conversion rates at Yahoo Finance (if needed)
-    #TODO     if (scalar @curs > scalar keys %quotes) {
-    #TODO         my %syms;
-    #TODO         foreach my $s (@curs) {
-    #TODO             $syms{$s}=$s.$base."=X" unless (exists($quotes{$s}));
-    #TODO         }
-
-    #TODO         my %qs = $q->fetch("yahoo_json",values %syms);
-    #TODO         foreach my $s (keys %syms) {
-    #TODO             next unless (exists($qs{$syms{$s},'success'}) && $qs{$syms{$s},'success'} == 1);
-
-    #TODO             foreach my $a (@attrs) {
-    #TODO                 if (exists($qs{$syms{$s},$a})) {
-    #TODO                     $quotes{$s}->{$attrMap{$a}} = $qs{$syms{$s},$a};
-    #TODO                 }
-    #TODO             }
-    #TODO         }
-    #TODO     }
-
-    #TODO     # quote conversion rates (if needed) using the default API (AlphaVantage as of Finance::Quote 1.47)
-    #TODO     if (scalar @curs > scalar keys %quotes) {
-    #TODO         my @syms;
-    #TODO         foreach my $s (@curs) {
-    #TODO             push(@syms,$s) unless (exists($quotes{$s}));
-    #TODO         }
-
-    #TODO         foreach my $c (@syms) {
-    #TODO             if ($base eq $c) {
-    #TODO                 $quotes{$c} = {
-    #TODO                     'price' => 1.0,
-    #TODO                     'currency' => $c
-    #TODO                 };
-    #TODO             } else {
-    #TODO                 my $convrate = $q->currency($c,$base);
-    #TODO                 if (! defined $convrate ) { next; }
-    #TODO                 $quotes{$c} = {
-    #TODO                     'price' => $convrate,
-    #TODO                     'currency' => $base
-    #TODO                 };
-    #TODO             }
-    #TODO         }
-    #TODO     }
-    #TODO     return %quotes;
-    #TODO }
+        #TODO # cache online query results
+        #TODO for k, q in rates.items():
+        #TODO     cacheQuote(dbh, k[:-2], q)
 
     return quotes
 

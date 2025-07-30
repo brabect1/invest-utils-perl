@@ -29,7 +29,11 @@ cursor = dbh.cursor()
 ## for k, v in d.items():
 ##     print(f'{k} = {v["price"]} {v["currency"]} @ {v["date"]}')
 
-d = xfrs.getCachedQuote(dbh, ['AAPL', 'MSFT'], date = '2025-07-23', online = True)
+## d = xfrs.getCachedQuote(dbh, ['AAPL', 'MSFT'], date = '2025-07-23', online = True)
+## for k, v in d.items():
+##     print(f'{k} = {v["price"]} {v["currency"]} @ {v["date"]}')
+
+d = xfrs.getQuoteCurrency(dbh, None, ['CZK', 'EUR', 'CAD', 'JPY'])
 for k, v in d.items():
-    print(f'{k} = {v["price"]} {v["currency"]} @ {v["date"]}')
+    print(f'{k} = {v["price"]} {v["currency"]} @ {v}')
 

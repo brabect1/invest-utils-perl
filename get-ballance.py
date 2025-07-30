@@ -81,26 +81,23 @@ for s in sorted(totals.keys()):
     print(f'\t{s} = {totals[s]:,.2f}')
 
 
-#TODO # Report total of totals NAV (in a base currency)
-#TODO # -----------------------------------------------
-#TODO if ($opt->base ne "") {
-#TODO     my $total = 0;
-#TODO     my $base = $opt->base;
-#TODO     print "# Total NAV ($base)\n";
-#TODO     foreach my $s (keys %totals) {
-#TODO         if ($s eq $base) {
-#TODO             $total += $totals{$s};
-#TODO         } else {
-#TODO             # query the conversion rate
-#TODO             my %qs = xfrs::getQuoteCurrency($dbh,'',$base,$s);
-#TODO             if (exists($qs{$s})) {
-#TODO                 $total += $totals{$s} * $qs{$s}->{'price'};
-#TODO             } else {
-#TODO                 print "Error: Failed to obtain conversion rate $s to $base!\n";
-#TODO             }
-#TODO         }
-#TODO     }
-#TODO     print "\t$base = $total\n";
+# Report total of totals NAV (in a base currency)
+# -----------------------------------------------
+if args.baseCurrency is not None:
+    total = 0;
+    base = args.baseCurrency
+    rates = xfrs.getQuoteCurrency(dbh, None, [base,] + list(totals.keys()));
+    print(f"# Total NAV ({base})")
+    for s in totals.keys():
+        if s == base:
+            total += totals[s]
+        else:
+            # query the conversion rate
+            if s + base in rates:
+                total += totals[s] * rates[s+base]['price']
+            else:
+                print(f"Error: Failed to obtain conversion rate {s} to {base}!")
+    print(f"\t{base} = {total:,.2f}")
 
 
 # close DB
