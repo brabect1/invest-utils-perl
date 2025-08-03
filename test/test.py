@@ -2,6 +2,7 @@ import sqlite3
 import sys
 import xfrs
 import argparse
+import datetime
 
 
 parser = argparse.ArgumentParser(
@@ -33,7 +34,36 @@ cursor = dbh.cursor()
 ## for k, v in d.items():
 ##     print(f'{k} = {v["price"]} {v["currency"]} @ {v["date"]}')
 
-d = xfrs.getQuoteCurrency(dbh, None, ['CZK', 'EUR', 'CAD', 'JPY'])
-for k, v in d.items():
-    print(f'{k} = {v["price"]} {v["currency"]} @ {v}')
+## d = xfrs.getQuoteCurrency(dbh, None, ['CZK', 'EUR', 'CAD', 'JPY'])
+## for k, v in d.items():
+##     print(f'{k} = {v["price"]} {v["currency"]} @ {v}')
+
+try:
+    p = xfrs.Price(1.2, 'CZK')
+    q = {
+            'symbol': 'AAPL',
+            'price': 210.12,
+            'currency': 'USD',
+            'date': '2025-08-01',
+            'type': 'real',
+            }
+    q = xfrs.StockQuote(**q)
+    print(q)
+    p = q.getPrice()
+    print(p)
+
+    q = {
+            'symbol': 'EURCZK',
+            'price': 25.12,
+            'currency': 'CZK',
+            'date': '2025-08-01',
+            'type': 'real',
+            }
+    q = xfrs.FxQuote(**q)
+    print(q)
+    p = q.getPrice()
+    print(p)
+except Exception as e:
+    print('Exception: ', e)
+    raise e
 

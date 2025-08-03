@@ -1,6 +1,8 @@
 import sqlite3
 import datetime
 import yfinance
+import numbers
+from abc import ABC, abstractmethod
 
 
 def getSymbols(dbh):
@@ -652,4 +654,199 @@ def getNAV(dbh, symbols):
     navs.update({s: '???' for s in symbols if s not in navs})
 
     return navs
+
+
+class Price(object):
+    """Represents a price that consists of the numerical value and the currency."""
+
+    fmt = '{:,.3f}'
+    """str: Format of the `Price` string representation."""
+
+    def __init__(self, value, currency):
+        if not isinstance(value, numbers.Number):
+            raise TypeError('`value` not a number')
+        if value < 0:
+            raise ValueError(f'`value={value}` cannot be negative')
+        if not isinstance(currency, str):
+            raise TypeError('`currency` not a string')
+
+        self.value = value
+        self.currency = currency
+
+    def __str__(self):
+        return Price.fmt.format(self.value) + self.currency
+
+
+class Quote(ABC):
+    """Represents a symbol quote.
+
+    Price at a given date/time is the primary information the quote provides.
+
+    In XFRS, quotes are represented with the date granularity as the module
+    is not intended for monitoring/recorfing intraday price movements.
+    """
+
+    fmtDate = '%Y-%m-%d'
+    """Date string format."""
+
+
+    def __init__(self, **kwargs):
+        """Creates a new quote instance.
+
+        Kwargs:
+            symbol (str): Required symbol string.
+            price (float): Required price of the quote.
+            currency (str): Required quoted price currency.
+            date (str): Optional date of the quote as YYYY-MM-DD string. Missing or `None` mean today.
+            type (str): Optional type of the quote. Missing or `None` means quote at the market close.
+        """
+        for a, t in {'symbol': str, 'price': float, 'currency': str}.items():
+            if a not in kwargs:
+                raise ValueError(f'Missing `{a}` information!')
+            if not isinstance(kwargs[a], t):
+                raise TypeError(f'`{a}` of wrong type, {t} expected but is {kwargs[a].__class__}.')
+
+        if 'date' not in kwargs or kwargs['date'] is None:
+            self.date = datetime.date.today()
+        elif isinstance(kwargs['date'], str):
+            self.date = datetime.datetime.strptime(kwargs["date"], '%Y-%m-%d').date()
+        elif isinstance(kwargs['date'], datetime.date):
+            self.date = kwargs['date']
+        else:
+            raise TypeError(f'`date` of wrong type, `datetime.date` expected but is {kwargs["date"].__class__}.')
+
+        self.price = Price(kwargs['price'], kwargs['currency'])
+        self.symbol = kwargs['symbol']
+
+        if 'type' not in kwargs or kwargs['type'] is None:
+            self.type = 'close'
+        elif not isinstance(kwargs['type'], str):
+            raise TypeError(f'`type` of wrong type, {str.__class__} expected but is {kwargs["type"].__class__}.')
+        else:
+            self.type = kwargs['type']
+
+
+    def __str__(self):
+        return f'{self.symbol}={self.price} @ ' + self.date.strftime("%Y-%m-%d")
+
+
+    @abstractmethod
+    def isStock(self):
+        """Indicates if the quoted symbol is a stock ticker.
+
+        Returns:
+            `True` if the quoted symbol is stock, `False` otherwise.
+        """
+        pass
+
+
+    @abstractmethod
+    def isCurrency(self):
+        """Indicates if the quoted symbol represents a currency pair quote.
+
+        Returns:
+            `True` if the quoted symbol is a currency pair, `False` otherwise.
+        """
+        pass
+
+
+    def getPrice(self):
+        """Gets the quoted price.
+
+        Returns:
+            Quoted price as a `Price` instance.
+        """
+        return self.price
+
+
+    def getDate(self, fmt = None):
+        """Gets the date of the quote.
+
+        Returns:
+            Date of the quote as the `datetime.date` instance.
+        """
+        if fmt is None:
+            return self.date
+        elif isinstance(fmt, str):
+            return self.date.strftime(fmt)
+        else:
+            ValueError('Wrong value for the date format.')
+
+
+    @abstractmethod
+    def getSymbol(self):
+        """Gets the quote symbol.
+
+        Returns:
+            String representing the symbol.
+        """
+        pass
+
+
+    @abstractmethod
+    def getYticker(self):
+        """Gets the yfinance ticker associated with the quote.
+
+        Returns:
+            String representing the ticker for yahoo finance.
+        """
+        pass
+
+
+class StockQuote(Quote):
+    """Represents the stock symbol quote."""
+
+    def __init__(self, **kwargs):
+        """Creates a new quote instance.
+
+        Kwargs:
+            symbol (str): Required symbol string.
+            price (float): Required price of the quote.
+            currency (str): Required quoted price currency.
+            date (str): Optional date of the quote as YYYY-MM-DD string. Missing or `None` mean today.
+            type (str): Optional type of the quote. Missing or `None` means quote at the market close.
+        """
+        super().__init__(**kwargs)
+
+
+    def isStock(self):
+        return True
+
+    def isCurrency(self):
+        return False
+
+    def getSymbol(self):
+        return self.symbol;
+
+    def getYticker(self):
+        return self.symbol;
+
+
+class FxQuote(Quote):
+    """Represents the currency pair quote."""
+
+    def __init__(self, **kwargs):
+        """Creates a new quote instance.
+
+        Kwargs:
+            symbol (str): Required symbol string.
+            price (float): Required price of the quote.
+            currency (str): Required quoted price currency.
+            date (str): Optional date of the quote as YYYY-MM-DD string. Missing or `None` mean today.
+            type (str): Optional type of the quote. Missing or `None` means quote at the market close.
+        """
+        super().__init__(**kwargs)
+
+
+    def isStock(self):
+        return False
+
+    def isCurrency(self):
+        return True
+
+    def getSymbol(self):
+        return self.symbol;
+
+    def getYticker(self):
+        return self.symboli + '=X';
 
