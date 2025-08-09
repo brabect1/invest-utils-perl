@@ -26,7 +26,7 @@ parser.add_argument('-f', '--from', type=str,
         help="Return only records on and after this date. Format YYYY-MM-DD.",
         )
 
-# `from` option: Letting users select only records beyond this date.
+# `to` option: Letting users select only records beyond this date.
 parser.add_argument('-t', '--to', type=str,
         default=None, dest='toDate',
         help="Return only records by this date. Format YYYY-MM-DD.",
