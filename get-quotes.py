@@ -97,7 +97,7 @@ if args.baseCurrency is not None:
     if args.baseCurrency in currencies: currencies.remove(args.baseCurrency)
 
     # map currencies to forex symbols
-    fxMap = {c: c + args.baseCurrency + '=X' for c in currencies}
+    fxMap = {c: xfrs.FxQuote.toQuoteSymbol(To=c, From=args.baseCurrency) for c in currencies}
 
     # quote forex symbols
     fx = xfrs.getOnlineQuote(fxMap.values(), date = date)
@@ -111,9 +111,10 @@ if args.baseCurrency is not None:
 
     # add forex quotes
     for c in currencies:
-        if c not in quotes:
-            quotes[c] = fx[fxMap[c]]
-            quotes[c]['status'] = 'online'
+        s = xfrs.FxQuote.toFxSymbol(To=c, From=args.baseCurrency)
+        if s not in quotes:
+            quotes[s] = fx[fxMap[c]]
+            quotes[s]['status'] = 'online'
 
 
 # Report quotes

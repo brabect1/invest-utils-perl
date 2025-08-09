@@ -38,32 +38,36 @@ cursor = dbh.cursor()
 ## for k, v in d.items():
 ##     print(f'{k} = {v["price"]} {v["currency"]} @ {v}')
 
-try:
-    p = xfrs.Price(1.2, 'CZK')
-    q = {
-            'symbol': 'AAPL',
-            'price': 210.12,
-            'currency': 'USD',
-            'date': '2025-08-01',
-            'type': 'real',
-            }
-    q = xfrs.StockQuote(**q)
-    print(q)
-    p = q.getPrice()
-    print(p)
+## try:
+##     p = xfrs.Price(1.2, 'CZK')
+##     q = {
+##             'symbol': 'AAPL',
+##             'price': 210.12,
+##             'currency': 'USD',
+##             'date': '2025-08-01',
+##             'type': 'real',
+##             }
+##     q = xfrs.StockQuote(**q)
+##     print(q)
+##     p = q.getPrice()
+##     print(p)
+## 
+##     q = {
+##             'symbol': 'EURCZK',
+##             'price': 25.12,
+##             'currency': 'CZK',
+##             'date': '2025-08-01',
+##             'type': 'real',
+##             }
+##     q = xfrs.FxQuote(**q)
+##     print(q)
+##     p = q.getPrice()
+##     print(p)
+## except Exception as e:
+##     print('Exception: ', e)
+##     raise e
 
-    q = {
-            'symbol': 'EURCZK',
-            'price': 25.12,
-            'currency': 'CZK',
-            'date': '2025-08-01',
-            'type': 'real',
-            }
-    q = xfrs.FxQuote(**q)
-    print(q)
-    p = q.getPrice()
-    print(p)
-except Exception as e:
-    print('Exception: ', e)
-    raise e
+d = xfrs.getOnlineQuote(['USDCZK=X',], date = '2025-07-25')
+for k, v in d.items():
+    print(f'{k} = {v["price"]} {v["currency"]} @ {v["date"]}')
 

@@ -835,6 +835,11 @@ class FxQuote(Quote):
             date (str): Optional date of the quote as YYYY-MM-DD string. Missing or `None` mean today.
             type (str): Optional type of the quote. Missing or `None` means quote at the market close.
         """
+        # repurpose `symbol` and `currency` into the FX symbol
+        if 'symbol' in kwargs and 'currency' in kwargs:
+            self.pair = [str(kwargs['symbol']), str(kwargs['currency'])]
+            kwargs['symbol'] = toFxSymbol(From=self.pair[1], To=self.pair[0])
+
         super().__init__(**kwargs)
 
 
@@ -848,5 +853,54 @@ class FxQuote(Quote):
         return self.symbol;
 
     def getYticker(self):
-        return self.symboli + '=X';
+        return self.pair[0] + self.pair[1] + '=X';
+
+    @classmethod
+    def toQuoteSymbol(cls, **kwargs):
+        """Composes an `yfinance` ticker representing the currency/forex (FX) pair.
+
+        The distinction to `toFxSymbol()` is that the *FX symbol* can only include word
+        characters, dash (`-`) and a dot (`.`). The *quote symbol* represents the FX pair
+        ticker for `yfinance`.
+
+        Kwargs:
+            To (str): *To* currency of the FX pair.
+            From (str): *From* currency of the FX pair.
+
+        Returns:
+            String representing the `yfinance` *quote symbol* of the FX pair.
+        """
+
+        for k in ['To', 'From']:
+            if k not in kwargs or kwargs[k] is None:
+                return None
+            if not isinstance(kwargs[k], str):
+                raise TypeError(f'kwargs[{k}] not a string')
+
+        return kwargs['To'] + kwargs['From'] + '=X'
+
+    @classmethod
+    def toFxSymbol(cls, **kwargs):
+        """Composes a currency/forex (FX) pair symbol to use in the string representation
+        of DB records.
+
+        The distinction to `toQuoteSymbol()` is that the *FX symbol* can only include word
+        characters, dash (`-`) and a dot (`.`). The *quote symbol* represents the FX pair
+        ticker for `yfinance`.
+
+        Kwargs:
+            To (str): *To* currency of the FX pair.
+            From (str): *From* currency of the FX pair.
+
+        Returns:
+            String representing the *FX symbol* of the FX pair.
+        """
+
+        for k in ['To', 'From']:
+            if k not in kwargs or kwargs[k] is None:
+                return None
+            if not isinstance(kwargs[k], str):
+                raise TypeError(f'kwargs[{k}] not a string')
+
+        return kwargs['To'] + '-' + kwargs['From']
 

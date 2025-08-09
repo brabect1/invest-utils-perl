@@ -39,6 +39,7 @@ if args.format not in {'xfrs'}:
 # pre-compiled reg ex's
 reComment = re.compile('^#.*')
 reRecord = re.compile('^(\w+)\(\s*(\w+=[\w\.-]+(\s+\w+=[\w\.-]+)*)\s*\)$')
+rePrice = re.compile('(\d+(\.\d*)?)([A-Z.]+)')
 
 rec_indexes = {
         'type': 0,
@@ -176,6 +177,176 @@ for filename in args.paths:
             # get the template and populate it with actuals
             rec = rec_templates[recType]
 
+            if 'date' in attrs:
+                rec[rec_indexes['date']] = attrs['date']
+
+
+            # money deposit or withdrawal
+            if recType in  {'deposit', 'withdraw'}:
+                # For the moment, we only assume currency transfers. There can
+                # potentially be asset transfers. These can be modeled, for now,
+                # as two records: A money transfer and a stock transaction.
+                # Note: A direct deposit/withdraw of an asset can also be modeled
+                # using the asset symbol as a currency and mandatory commision
+                # (even though of zero value) with a valid currency symbol and
+                # a mandatory cost basis (that would translate to `unit` currency
+                # and price). The cost basis had to be hard-coded and would likely
+                # represent the closing price at the date of the transfer per unit
+                # of the asset.
+                if 'amount' in attrs:
+                    m = rePrice.match(attrs['amount'])
+                    if m:
+                        rec[rec_indexes['amount']] = m[1]
+                        rec[rec_indexes['unit_curr']] = m[3]
+                        rec[rec_indexes['source_curr']] = m[3]
+                        rec[rec_indexes['comm_curr']] = m[3]
+
+                        # some transfers may incur expenses that we account as commisions
+                        if 'commission':
+                            m = rePrice.match(attrs['commission'])
+                            if m:
+                                rec[rec_indexes['comm_price']] = m[1]
+                                rec[rec_indexes['comm_curr']] = m[3]
+
+                        # TODO ---->>>> experimental
+                        # direct asset transfers require cost basis so we can later
+                        # evaluate gains on selling the asset
+                        # TODO: Presently the case of depositing and withdrawing assets
+                        # is not supported for evaluating portfolio performance (in
+                        # `get-performance.pl`).
+                        if 'costbasis':
+                            m = rePrice.match(attrs['costbasis'])
+                            if m:
+                                rec[rec_indexes['unit_price']] = m[1]
+                                rec[rec_indexes['unit_curr']] = m[3]
+                        #<<<<----
+                    else:
+                        print(f"Unexpected format of transaction amoount, line {lineno}: {attrs['amount']}",
+                                file=sys.stderr)
+
+
+            # stock buy and sell transactions
+            if recType in {'buy','sell'}:
+                if 'amount' in attrs:
+                    rec[rec_indexes['amount']] = attrs['amount']
+
+                if 'stock' in attrs:
+                    rec[rec_indexes['source_curr']] = attrs['stock']
+                else:
+                    print("Missing stock symbol, line {lineno}: {line}", file=sys.stderr)
+
+                if 'price' in attrs:
+                    m = rePrice.match(attrs['price'])
+                    if m:
+                        rec[rec_indexes['unit_price']] = m[1]
+                        rec[rec_indexes['unit_curr']] = m[3]
+                    else:
+                        print(f"Unexpected format of transaction price, line {lineno}: {attrs['price']}",
+                                file=sys.stderr)
+
+                if 'commission' in attrs:
+                    m = rePrice.match(attrs['commission'])
+                    if m:
+                        rec[rec_indexes['comm_price']] = m[1]
+                        rec[rec_indexes['comm_curr']] = m[3]
+                    else:
+                        print(f"Unexpected format of transaction commission, line {lineno}: {attrs['commission']}",
+                                file=sys.stderr)
+
+            # currency exchange
+            if recType == 'fx':
+                if 'amount' in attrs:
+                    m = rePrice.match(attrs['amount'])
+                    if m:
+                        rec[rec_indexes['amount']] = m[1]
+                        rec[rec_indexes['unit_curr']] = m[3]
+                        rec[rec_indexes['unit_price']] = '1'
+                    else:
+                        print(f"Unexpected format of transaction amoount, line {lineno}: {attrs['amount']}",
+                                file=sys.stderr)
+
+                if 'price' in attrs:
+                    m = rePrice.match(attrs['price'])
+                    if m:
+                        rec[rec_indexes['source_price']] = m[1]
+                        rec[rec_indexes['source_curr']] = m[3]
+                    else:
+                        print(f"Unexpected format of transaction price, line {lineno}: {attrs['price']}",
+                                file=sys.stderr)
+
+                if 'commission' in attrs:
+                    m = rePrice.match(attrs['commission'])
+                    if m:
+                        rec[rec_indexes['comm_price']] = m[1]
+                        rec[rec_indexes['comm_curr']] = m[3]
+                    else:
+                        print(f"Unexpected format of transaction commission, line {lineno}: {attrs['commission']}",
+                                file=sys.stderr)
+
+            # dividend reception
+            if recType == 'dividend':
+                if 'amount' in attrs:
+                    m = rePrice.match(attrs['amount'])
+                    if m:
+                        rec[rec_indexes['amount']] = m[1]
+                        rec[rec_indexes['unit_curr']] = m[3]
+                        rec[rec_indexes['unit_price']] = '1'
+                    else:
+                        print(f"Unexpected format of transaction amoount, line {lineno}: {attrs['amount']}",
+                                file=sys.stderr)
+
+                # for now treat stock title as the source currency
+                if 'stock' in attrs:
+                    rec[rec_indexes['source_curr']] = attrs['stock']
+
+                # for now treat tax as the commissions
+                if 'tax' in attrs:
+                    m = rePrice.match(attrs['tax'])
+                    if m:
+                        rec[rec_indexes['comm_price']] = m[1]
+                        rec[rec_indexes['comm_curr']] = m[3]
+                    else:
+                        print(f"Unexpected format of transaction tax, line {lineno}: {attrs['tax']}",
+                                file=sys.stderr)
+
+
+            # quotes
+            if recType == 'quote':
+                if 'amount' in attrs:
+                    rec[rec_indexes['amount']] = attrs['amount']
+
+                # process `price` before `currency` so that we can properly
+                # assemble the forex symbol
+                m = None
+                if 'price' in attrs:
+                    m = rePrice.match(attrs['price'])
+                    if m:
+                        rec[rec_indexes['unit_price']] = m[1]
+                        rec[rec_indexes['unit_curr']] = m[3]
+                    else:
+                        m = None
+                        print(f"Unexpected format of transaction price, line {lineno}: {attrs['price']}",
+                                file=sys.stderr)
+
+                if 'stock' in attrs:
+                    rec[rec_indexes['source_curr']] = attrs['stock']
+                elif 'currency' in attrs:
+                    if m is not None:
+                        rec[rec_indexes['source_curr']] = xfrs.toQuoteSymbol(To=attrs['currency'], From=m[3])
+                    else:
+                        print("Missing price associated with currency quote, line {lineno}: {line}",
+                                file=sys.stderr)
+                else:
+                    print("Missing stock or currency symbol, line {lineno}: {line}", file=sys.stderr)
+
+
             #TODO
             print(f'{lineno}: ' + recType + ': ' + ', '.join([k + '=' + v for k, v in attrs.items()]), file=sys.stderr)
+            print(f'{lineno}: {rec}', file=sys.stderr)
 
+
+
+# close DB
+# --------
+dbh.commit()
+dbh.close()
