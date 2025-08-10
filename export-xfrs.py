@@ -59,7 +59,7 @@ dbh = sqlite3.connect(args.db)
 cursor = dbh.cursor()
 
 if args.format not in {'xfrs'}:
-    die(f'Export to \'{args.format}\' not implemented!')
+    sys.exit(f'Export to \'{args.format}\' not implemented!')
 
 
 # Collect transfers

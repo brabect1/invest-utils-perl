@@ -4,6 +4,7 @@ import xfrs
 import argparse
 import datetime
 import re
+import os.path
 
 #TODO allowedRecords = {'buy', 'sell', 'dividend', 'fx', 'deposit', 'withdraw', 'quote'}
 
@@ -28,18 +29,32 @@ parser.add_argument('--format', type=str, choices = ['xfrs', 'json', 'csv'],
         help="Export output format.",
         )
 
+# `force` option: If to overwrite/update the existing DB.
+parser.add_argument('--force', action='store_true',
+        default=False, dest='force',
+        help="Allows overwriting/updating the existing DB.",
+        )
+
 args = parser.parse_args()
+
+# Test arguments
+# --------------
+if args.format not in {'xfrs'}:
+    sys.exit(f'Export to \'{args.format}\' not implemented!')
+
+if os.path.isfile(args.db) and not args.force:
+    sys.exit(f'File \'{args.db}\' already exists. Use `--force` to overwrite/update.')
 
 dbh = sqlite3.connect(args.db)
 cursor = dbh.cursor()
 
-if args.format not in {'xfrs'}:
-    die(f'Export to \'{args.format}\' not implemented!')
+# Pre-defined values
+# ------------------
 
 # pre-compiled reg ex's
 reComment = re.compile('^#.*')
 reRecord = re.compile('^(\w+)\(\s*(\w+=[\w\.-]+(\s+\w+=[\w\.-]+)*)\s*\)$')
-rePrice = re.compile('(\d+(\.\d*)?)([A-Z.]+)')
+rePrice = re.compile('(-?\d+(\.\d*)?)([A-Z.]+)')
 
 rec_indexes = {
         'type': 0,
@@ -202,7 +217,7 @@ for filename in args.paths:
                         rec[rec_indexes['comm_curr']] = m[3]
 
                         # some transfers may incur expenses that we account as commisions
-                        if 'commission':
+                        if 'commission' in attrs:
                             m = rePrice.match(attrs['commission'])
                             if m:
                                 rec[rec_indexes['comm_price']] = m[1]
@@ -214,7 +229,7 @@ for filename in args.paths:
                         # TODO: Presently the case of depositing and withdrawing assets
                         # is not supported for evaluating portfolio performance (in
                         # `get-performance.pl`).
-                        if 'costbasis':
+                        if 'costbasis' in attrs:
                             m = rePrice.match(attrs['costbasis'])
                             if m:
                                 rec[rec_indexes['unit_price']] = m[1]
