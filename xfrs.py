@@ -769,8 +769,6 @@ class Price(object):
         """
         if not isinstance(value, numbers.Number):
             raise TypeError('`value` not a number')
-        if value < 0:
-            raise ValueError(f'`value={value}` cannot be negative')
         if not isinstance(currency, str):
             raise TypeError('`currency` not a string')
 
