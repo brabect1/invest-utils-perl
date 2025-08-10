@@ -4,7 +4,6 @@ import xfrs
 import argparse
 import datetime
 
-allowedRecords = {'buy', 'sell', 'dividend', 'fx', 'deposit', 'withdraw', 'quote'}
 
 parser = argparse.ArgumentParser(
         description="Exports DB into a text format."
@@ -50,7 +49,7 @@ parser.add_argument('-t', '--to', type=str,
 parser.add_argument('-r', '--records', type=str,
         default=None, dest='records',
         help="Space separated list of record types to export, either of " + \
-        ','.join(allowedRecords) + '.',
+        ','.join(xfrs.ALLOWED_RECORDS) + '.',
         )
 
 args = parser.parse_args()
@@ -69,7 +68,7 @@ xfers = None
 # see if not to limit export to quotes only
 skipXfers = False
 if args.records is not None:
-    skipXfers = len([r for r in args.records.split() if r in allowedRecords and r != 'quote']) == 0
+    skipXfers = len([r for r in args.records.split() if r in xfrs.ALLOWED_RECORDS and r != 'quote']) == 0
 
 # Test if the 'xfrs' table exist, or create otherwise
 stmt = "SELECT name FROM sqlite_master WHERE type='table' AND name='xfrs';" 
@@ -91,7 +90,7 @@ if len(cursor.fetchall()) > 0 and not skipXfers:
 
     # see if filter by type
     if args.records is not None:
-        records = ['\'' + s + '\'' for s in args.records.split() if s in allowedRecords]
+        records = ['\'' + s + '\'' for s in args.records.split() if s in xfrs.ALLOWED_RECORDS]
         if len(records) > 0:
             filters.append('type in (' + ','.join(records) +')')
 
@@ -213,7 +212,12 @@ if len(cursor.fetchall()) > 0 and not skipQuotes:
                 'currency': row[4],
                 }
         if row[0] in stocks: q = xfrs.StockQuote(**q)
-        else: q = xfrs.FxQuote(**q)
+        else:
+            # recover the `to` currency symbol
+            p = xfrs.FxQuote.fromQuoteSymbol(row[0])
+            if p is None: continue
+            else: q['symbol'] = p['To']
+            q = xfrs.FxQuote(**q)
         quotes.append(q)
 
 # Export
@@ -222,9 +226,11 @@ if len(cursor.fetchall()) > 0 and not skipQuotes:
 # export transactions
 if xfers is not None:
     print('\n# Transactions\n# -------\n')
+    fmt = '{:.12f}'
     for q in xfers:
         if q['type'] in {'buy', 'sell'}:
-            s = f'{q["type"]}(stock={q["scurr"]} amount={q["amount"]} price={q["uprice"]}{q["ucurr"]} date={q["date"]} commission={q["cprice"]}{q["ccurr"]})'
+            p = xfrs.Price(q["uprice"], q["ucurr"], fmt)
+            s = f'{q["type"]}(stock={q["scurr"]} amount={q["amount"]} price={p} date={q["date"]} commission={q["cprice"]}{q["ccurr"]})'
         elif q['type'] in {'deposit', 'withdraw'}:
             s = f'{q["type"]}(amount={q["amount"]}{q["ucurr"]} date={q["date"]}'
             if q['cprice'] > 0: s += f' commission={q["cprice"]}{q["ccurr"]}'
@@ -234,7 +240,8 @@ if xfers is not None:
             s += f' tax={q["cprice"]}{q["ccurr"]}'
             s += f' date={q["date"]})'
         elif q['type'] == 'fx':
-            s = f'{q["type"]}(amount={q["amount"]}{q["ucurr"]} price={q["uprice"]}{q["ucurr"]} date={q["date"]}'
+            p = xfrs.Price(q["uprice"], q["ucurr"], fmt)
+            s = f'{q["type"]}(amount={q["amount"]}{q["ucurr"]} price={p} date={q["date"]}'
             if q['cprice'] > 0: s += f' commission={q["cprice"]}{q["ccurr"]}'
             s += ')'
         else:
@@ -251,7 +258,7 @@ if quotes is not None:
         else:
             symname = 'currency'
 
-        print(f'quote({symname}={q.getSymbol()} price={q.getPrice()} date={q.getDate("%Y-%m-%d")})')
+        print(f'quote({symname}={q.getSymbol()} price={q.getPrice("{:.12f}")} date={q.getDate("%Y-%m-%d")} type={q.getType()})')
 
 # print export date
 print('\n# export date: ' + datetime.date.today().strftime("%Y-%m-%d"))

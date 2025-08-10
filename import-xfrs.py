@@ -6,7 +6,6 @@ import datetime
 import re
 import os.path
 
-#TODO allowedRecords = {'buy', 'sell', 'dividend', 'fx', 'deposit', 'withdraw', 'quote'}
 
 parser = argparse.ArgumentParser(
         description="Imports data into (Sqlite3) DB."
@@ -45,9 +44,6 @@ if args.format not in {'xfrs'}:
 if os.path.isfile(args.db) and not args.force:
     sys.exit(f'File \'{args.db}\' already exists. Use `--force` to overwrite/update.')
 
-dbh = sqlite3.connect(args.db)
-cursor = dbh.cursor()
-
 # Pre-defined values
 # ------------------
 
@@ -55,18 +51,6 @@ cursor = dbh.cursor()
 reComment = re.compile('^#.*')
 reRecord = re.compile('^(\w+)\(\s*(\w+=[\w\.-]+(\s+\w+=[\w\.-]+)*)\s*\)$')
 rePrice = re.compile('(-?\d+(\.\d*)?)([A-Z.]+)')
-
-rec_indexes = {
-        'type': 0,
-        'date': 1,
-        'amount': 2,
-        'unit_price': 3,
-        'unit_curr': 4,
-        'source_price': 5,
-        'source_curr': 6,
-        'comm_price': 7,
-        'comm_curr': 8,
-        }
 
 rec_templates = {
         'withdraw': [
@@ -144,13 +128,15 @@ rec_templates = {
             0,
             '',
             0,
-            '',
+            'real',
             ],
         }
 
 
 # process files
 # -------------
+recs = list(); # list of collected records
+
 for filename in args.paths:
     with open(filename) as file:
         lineno = 0
@@ -190,10 +176,10 @@ for filename in args.paths:
                 attrs[attrParts[0]] = attrParts[1]
 
             # get the template and populate it with actuals
-            rec = rec_templates[recType]
+            rec = rec_templates[recType].copy()
 
             if 'date' in attrs:
-                rec[rec_indexes['date']] = attrs['date']
+                rec[xfrs.REC_INDEXES['date']] = attrs['date']
 
 
             # money deposit or withdrawal
@@ -211,17 +197,17 @@ for filename in args.paths:
                 if 'amount' in attrs:
                     m = rePrice.match(attrs['amount'])
                     if m:
-                        rec[rec_indexes['amount']] = m[1]
-                        rec[rec_indexes['unit_curr']] = m[3]
-                        rec[rec_indexes['source_curr']] = m[3]
-                        rec[rec_indexes['comm_curr']] = m[3]
+                        rec[xfrs.REC_INDEXES['amount']] = m[1]
+                        rec[xfrs.REC_INDEXES['unit_curr']] = m[3]
+                        rec[xfrs.REC_INDEXES['source_curr']] = m[3]
+                        rec[xfrs.REC_INDEXES['comm_curr']] = m[3]
 
                         # some transfers may incur expenses that we account as commisions
                         if 'commission' in attrs:
                             m = rePrice.match(attrs['commission'])
                             if m:
-                                rec[rec_indexes['comm_price']] = m[1]
-                                rec[rec_indexes['comm_curr']] = m[3]
+                                rec[xfrs.REC_INDEXES['comm_price']] = m[1]
+                                rec[xfrs.REC_INDEXES['comm_curr']] = m[3]
 
                         # TODO ---->>>> experimental
                         # direct asset transfers require cost basis so we can later
@@ -232,8 +218,8 @@ for filename in args.paths:
                         if 'costbasis' in attrs:
                             m = rePrice.match(attrs['costbasis'])
                             if m:
-                                rec[rec_indexes['unit_price']] = m[1]
-                                rec[rec_indexes['unit_curr']] = m[3]
+                                rec[xfrs.REC_INDEXES['unit_price']] = m[1]
+                                rec[xfrs.REC_INDEXES['unit_curr']] = m[3]
                         #<<<<----
                     else:
                         print(f"Unexpected format of transaction amoount, line {lineno}: {attrs['amount']}",
@@ -243,18 +229,18 @@ for filename in args.paths:
             # stock buy and sell transactions
             if recType in {'buy','sell'}:
                 if 'amount' in attrs:
-                    rec[rec_indexes['amount']] = attrs['amount']
+                    rec[xfrs.REC_INDEXES['amount']] = attrs['amount']
 
                 if 'stock' in attrs:
-                    rec[rec_indexes['source_curr']] = attrs['stock']
+                    rec[xfrs.REC_INDEXES['source_curr']] = attrs['stock']
                 else:
                     print("Missing stock symbol, line {lineno}: {line}", file=sys.stderr)
 
                 if 'price' in attrs:
                     m = rePrice.match(attrs['price'])
                     if m:
-                        rec[rec_indexes['unit_price']] = m[1]
-                        rec[rec_indexes['unit_curr']] = m[3]
+                        rec[xfrs.REC_INDEXES['unit_price']] = m[1]
+                        rec[xfrs.REC_INDEXES['unit_curr']] = m[3]
                     else:
                         print(f"Unexpected format of transaction price, line {lineno}: {attrs['price']}",
                                 file=sys.stderr)
@@ -262,8 +248,8 @@ for filename in args.paths:
                 if 'commission' in attrs:
                     m = rePrice.match(attrs['commission'])
                     if m:
-                        rec[rec_indexes['comm_price']] = m[1]
-                        rec[rec_indexes['comm_curr']] = m[3]
+                        rec[xfrs.REC_INDEXES['comm_price']] = m[1]
+                        rec[xfrs.REC_INDEXES['comm_curr']] = m[3]
                     else:
                         print(f"Unexpected format of transaction commission, line {lineno}: {attrs['commission']}",
                                 file=sys.stderr)
@@ -273,9 +259,9 @@ for filename in args.paths:
                 if 'amount' in attrs:
                     m = rePrice.match(attrs['amount'])
                     if m:
-                        rec[rec_indexes['amount']] = m[1]
-                        rec[rec_indexes['unit_curr']] = m[3]
-                        rec[rec_indexes['unit_price']] = '1'
+                        rec[xfrs.REC_INDEXES['amount']] = m[1]
+                        rec[xfrs.REC_INDEXES['unit_curr']] = m[3]
+                        rec[xfrs.REC_INDEXES['unit_price']] = '1'
                     else:
                         print(f"Unexpected format of transaction amoount, line {lineno}: {attrs['amount']}",
                                 file=sys.stderr)
@@ -283,8 +269,8 @@ for filename in args.paths:
                 if 'price' in attrs:
                     m = rePrice.match(attrs['price'])
                     if m:
-                        rec[rec_indexes['source_price']] = m[1]
-                        rec[rec_indexes['source_curr']] = m[3]
+                        rec[xfrs.REC_INDEXES['source_price']] = m[1]
+                        rec[xfrs.REC_INDEXES['source_curr']] = m[3]
                     else:
                         print(f"Unexpected format of transaction price, line {lineno}: {attrs['price']}",
                                 file=sys.stderr)
@@ -292,8 +278,8 @@ for filename in args.paths:
                 if 'commission' in attrs:
                     m = rePrice.match(attrs['commission'])
                     if m:
-                        rec[rec_indexes['comm_price']] = m[1]
-                        rec[rec_indexes['comm_curr']] = m[3]
+                        rec[xfrs.REC_INDEXES['comm_price']] = m[1]
+                        rec[xfrs.REC_INDEXES['comm_curr']] = m[3]
                     else:
                         print(f"Unexpected format of transaction commission, line {lineno}: {attrs['commission']}",
                                 file=sys.stderr)
@@ -303,23 +289,23 @@ for filename in args.paths:
                 if 'amount' in attrs:
                     m = rePrice.match(attrs['amount'])
                     if m:
-                        rec[rec_indexes['amount']] = m[1]
-                        rec[rec_indexes['unit_curr']] = m[3]
-                        rec[rec_indexes['unit_price']] = '1'
+                        rec[xfrs.REC_INDEXES['amount']] = m[1]
+                        rec[xfrs.REC_INDEXES['unit_curr']] = m[3]
+                        rec[xfrs.REC_INDEXES['unit_price']] = '1'
                     else:
                         print(f"Unexpected format of transaction amoount, line {lineno}: {attrs['amount']}",
                                 file=sys.stderr)
 
                 # for now treat stock title as the source currency
                 if 'stock' in attrs:
-                    rec[rec_indexes['source_curr']] = attrs['stock']
+                    rec[xfrs.REC_INDEXES['source_curr']] = attrs['stock']
 
                 # for now treat tax as the commissions
                 if 'tax' in attrs:
                     m = rePrice.match(attrs['tax'])
                     if m:
-                        rec[rec_indexes['comm_price']] = m[1]
-                        rec[rec_indexes['comm_curr']] = m[3]
+                        rec[xfrs.REC_INDEXES['comm_price']] = m[1]
+                        rec[xfrs.REC_INDEXES['comm_curr']] = m[3]
                     else:
                         print(f"Unexpected format of transaction tax, line {lineno}: {attrs['tax']}",
                                 file=sys.stderr)
@@ -327,41 +313,50 @@ for filename in args.paths:
 
             # quotes
             if recType == 'quote':
-                if 'amount' in attrs:
-                    rec[rec_indexes['amount']] = attrs['amount']
-
                 # process `price` before `currency` so that we can properly
                 # assemble the forex symbol
                 m = None
                 if 'price' in attrs:
                     m = rePrice.match(attrs['price'])
                     if m:
-                        rec[rec_indexes['unit_price']] = m[1]
-                        rec[rec_indexes['unit_curr']] = m[3]
+                        rec[xfrs.REC_INDEXES['unit_price']] = m[1]
+                        rec[xfrs.REC_INDEXES['unit_curr']] = m[3]
                     else:
                         m = None
                         print(f"Unexpected format of transaction price, line {lineno}: {attrs['price']}",
                                 file=sys.stderr)
 
                 if 'stock' in attrs:
-                    rec[rec_indexes['source_curr']] = attrs['stock']
+                    rec[xfrs.REC_INDEXES['source_curr']] = attrs['stock']
                 elif 'currency' in attrs:
                     if m is not None:
-                        rec[rec_indexes['source_curr']] = xfrs.toQuoteSymbol(To=attrs['currency'], From=m[3])
+                        rec[xfrs.REC_INDEXES['source_curr']] = xfrs.FxQuote.toQuoteSymbol(To=attrs['currency'], From=m[3])
                     else:
                         print("Missing price associated with currency quote, line {lineno}: {line}",
                                 file=sys.stderr)
                 else:
                     print("Missing stock or currency symbol, line {lineno}: {line}", file=sys.stderr)
 
+                # repurpose `comm_currency` (which makes no sense for a quote) to
+                # hold the quote type, if provided
+                if 'type' in attrs:
+                    rec[xfrs.REC_INDEXES['comm_curr']] = attrs['type']
 
-            #TODO
-            print(f'{lineno}: ' + recType + ': ' + ', '.join([k + '=' + v for k, v in attrs.items()]), file=sys.stderr)
-            print(f'{lineno}: {rec}', file=sys.stderr)
+            recs.append(rec)
 
+
+# Put records into DB
+# -------------------
+if len(rec) > 0:
+    dbh = sqlite3.connect(args.db)
+    cursor = dbh.cursor()
+
+    for rec in recs:
+        xfrs.addRecord(dbh, rec)
 
 
 # close DB
 # --------
-dbh.commit()
-dbh.close()
+if len(rec) > 0:
+    dbh.commit()
+    dbh.close()

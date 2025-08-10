@@ -70,13 +70,13 @@ if args.baseCurrency is not None:
         # skip base currency
         if c == args.baseCurrency: continue
 
-        s = c + args.baseCurrency + '=X'
+        s = xfrs.FxQuote.toQuoteSymbol(To=c, From=args.baseCurrency)
         qs = yfinance.Ticker(s)
         q = { 'regularMarketPrice': None, 'currency': None }
         try:
             for a in q.keys():
                 q[a] = qs.info[a]
-            quotes[c + args.baseCurrency] = {'price': q['regularMarketPrice'], 'currency': q['currency']}
+            quotes[s] = {'price': q['regularMarketPrice'], 'currency': q['currency']}
         except:
             pass
 

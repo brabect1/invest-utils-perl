@@ -5,6 +5,105 @@ import numbers
 from abc import ABC, abstractmethod
 
 
+ALLOWED_RECORDS = {'buy', 'sell', 'dividend', 'fx', 'deposit', 'withdraw', 'quote'}
+"""(constant) List of recognized DB records.
+
+As the module is unlikely to be used for other than the author's own purposes
+there is little reason to rise barriers on altering the list. If needed in
+future, see https://stackoverflow.com/a/2688086 for one solution.
+"""
+
+REC_INDEXES = {
+        'type': 0,
+        'date': 1,
+        'amount': 2,
+        'unit_price': 3,
+        'unit_curr': 4,
+        'source_price': 5,
+        'source_curr': 6,
+        'comm_price': 7,
+        'comm_curr': 8,
+        }
+"""Look-up table to translate DB record named indices to the positional indices.
+
+The positional indices are used in list representation of a DB record.
+"""
+
+def addRecord(dbh, record):
+    """Adds a new record into DB.
+
+    The routine automatically creates a DB table if not already exists. Record
+    IDs are inferred automatically in a successive order.
+
+    IMPORTANT: It is currently assumed the (transfer) records are unique, even
+    if the transfer were of the same type, symbol/instrument and date. It seems
+    possible to have two transfers of the same kind on the same date (e.g. as
+    the broker executed one order as multiple transactions).
+    For quotes, though, a quote should be unique for the symbol and the date.
+    Hence the quote record would be updated should it already exist in DB.
+
+    The `record` is a list of strings of the following meaning:
+    0. Record type.
+
+    Args:
+        dbh: reference to the open DB connection
+        record: hash array mapping record attributes to record values
+    """
+
+    if not isinstance(record, list):
+        raise TypeError(f'record: list expected, got {record.__class__}')
+
+    if len(record) < 9:
+        raise ValueError(f'record: too short ({len(record)})')
+
+    if dbh is None: return
+    cursor = dbh.cursor()
+
+    # `quote` record
+    if record[0] == 'quote':
+
+        # create and cache the quote
+        c = record[REC_INDEXES['unit_curr']]
+        quote = {
+                'price': record[REC_INDEXES['unit_price']],
+                'currency': c,
+                }
+        if len(record[REC_INDEXES['comm_curr']]) > 0:
+            quote['type'] = record[REC_INDEXES['comm_curr']]
+        cacheQuote(dbh, record[REC_INDEXES['source_curr']], quote)
+
+    # all but `quote` records
+    elif record[0] in ALLOWED_RECORDS:
+
+        # make sure the `xfrs` table exists
+        stmt = '''CREATE TABLE IF NOT EXISTS xfrs (
+            id INT PRIMARY KEY,
+            type TEXT NOT NULL,
+            date TEXT,
+            amount INT NOT NULL,
+            unit_price REAL,
+            unit_curr TEXT,
+            source_price REAL,
+            source_curr TEXT,
+            comm_price REAL,
+            comm_curr TEXT);
+            '''
+        cursor.execute(stmt)
+
+        # get the record ID
+        stmt = 'SELECT COUNT(1) FROM xfrs;'
+        cursor.execute(stmt)
+        row = cursor.fetchone()
+        id = 0 if row is None else row[0]
+
+        # create the INSERT statement/query
+        stmt = 'INSERT INTO xfrs (id,' + ','.join(REC_INDEXES.keys()) + ') VALUES '''
+        stmt += f"({id+1},"
+        stmt += ','.join([f'\'{v}\'' for v in record[0:9]])
+        stmt += ");"
+        cursor.execute(stmt)
+
+
 def getSymbols(dbh):
     """Gets the list of all symbols from the transfers DB, incl. currencies and stocks.
 
@@ -224,19 +323,15 @@ def cacheQuote(dbh, symbol, quote):
     else:
         date = quote['date']
 
-    # Test if the 'quotes' table exist, or create otherwise
-    stmt = "SELECT name FROM sqlite_master WHERE type='table' AND name='quotes';" 
+    # make sure the 'quotes' table exist, or create otherwise
+    stmt = '''CREATE TABLE IF NOT EXISTS quotes (
+            id INT PRIMARY KEY,
+            symbol TEXT NOT NULL,
+            date TEXT NOT NULL,
+            type TEXT NOT NULL,
+            price REAL,
+            curr TEXT);'''
     cursor.execute(stmt)
-
-    if len(cursor.fetchall()) == 0:
-        stmt = '''CREATE TABLE quotes (
-                id INT PRIMARY KEY,
-                symbol TEXT NOT NULL,
-                date TEXT NOT NULL,
-                type TEXT NOT NULL,
-                price REAL,
-                curr TEXT);'''
-        cursor.execute(stmt)
 
     # query existing DB quotes
     stmt = f'SELECT * from quotes where date=\'{date}\' AND symbol=\'{symbol}\';'
@@ -662,7 +757,16 @@ class Price(object):
     fmt = '{:,.3f}'
     """str: Format of the `Price` string representation."""
 
-    def __init__(self, value, currency):
+    def __init__(self, value, currency, fmt=None):
+        """Creates a new `Price` instance.
+
+        Args:
+            value (float): Price value.
+            currency (str): Currency associated with the price.
+            fmt (str): Float formatting string to be used for Price to string
+                       conversion. `None` yields the defualt `Price` class
+                       formatting.
+        """
         if not isinstance(value, numbers.Number):
             raise TypeError('`value` not a number')
         if value < 0:
@@ -672,9 +776,23 @@ class Price(object):
 
         self.value = value
         self.currency = currency
+        self.fmt = fmt
+
+    def copy(self, fmt=None):
+        """Gets the new copy of the Price instance with a provided formatting.
+
+        Args:
+            fmt (str): Float formatting string to be used for Price to string
+                       conversion. `None` yields the defualt `Price` class
+                       formatting.
+
+        Returns:
+            Copy of the Price instance with a new formatting.
+        """
+        return Price(self.value, self.currency, fmt)
 
     def __str__(self):
-        return Price.fmt.format(self.value) + self.currency
+        return (self.fmt or Price.fmt).format(self.value) + self.currency
 
 
 class Quote(ABC):
@@ -750,13 +868,27 @@ class Quote(ABC):
         pass
 
 
-    def getPrice(self):
+    def getType(self):
+        """Gets the type of quoted price.
+
+        Returns:
+            Type of the quoted price.
+        """
+        return self.type
+
+
+    def getPrice(self, fmt=None):
         """Gets the quoted price.
+
+        Args:
+            fmt (str): Float formatting string to be used for Price to string
+                       conversion. `None` yields the defualt `Price` class
+                       formatting.
 
         Returns:
             Quoted price as a `Price` instance.
         """
-        return self.price
+        return self.price.copy(fmt)
 
 
     def getDate(self, fmt = None):
@@ -825,6 +957,7 @@ class StockQuote(Quote):
 class FxQuote(Quote):
     """Represents the currency pair quote."""
 
+
     def __init__(self, **kwargs):
         """Creates a new quote instance.
 
@@ -838,7 +971,7 @@ class FxQuote(Quote):
         # repurpose `symbol` and `currency` into the FX symbol
         if 'symbol' in kwargs and 'currency' in kwargs:
             self.pair = [str(kwargs['symbol']), str(kwargs['currency'])]
-            kwargs['symbol'] = toFxSymbol(From=self.pair[1], To=self.pair[0])
+            kwargs['symbol'] = self.__class__.toFxSymbol(From=self.pair[1], To=self.pair[0])
 
         super().__init__(**kwargs)
 
@@ -850,7 +983,7 @@ class FxQuote(Quote):
         return True
 
     def getSymbol(self):
-        return self.symbol;
+        return self.pair[0];
 
     def getYticker(self):
         return self.pair[0] + self.pair[1] + '=X';
@@ -861,7 +994,8 @@ class FxQuote(Quote):
 
         The distinction to `toFxSymbol()` is that the *FX symbol* can only include word
         characters, dash (`-`) and a dot (`.`). The *quote symbol* represents the FX pair
-        ticker for `yfinance`.
+        ticker for `yfinance`. Hence for the "EUR/USD" pair, the *FX symbol* and *quote
+        symbol* is `EUR-USD` and `EURUSD=X`, respectively.
 
         Kwargs:
             To (str): *To* currency of the FX pair.
@@ -870,6 +1004,9 @@ class FxQuote(Quote):
         Returns:
             String representing the `yfinance` *quote symbol* of the FX pair.
         """
+
+        if 'Pair' in kwargs and isinstance(kwargs['Pair'], list) and len(kwargs['Pair']) > 1:
+            return kwargs['Pair'][0] + '-' + kwargs['Pair'][1]
 
         for k in ['To', 'From']:
             if k not in kwargs or kwargs[k] is None:
@@ -880,13 +1017,40 @@ class FxQuote(Quote):
         return kwargs['To'] + kwargs['From'] + '=X'
 
     @classmethod
+    def fromQuoteSymbol(cls, symbol):
+        """Recovers a curryency/FX pair from an FX *quote symbol*.
+
+        This method is a counterpart to the `toQuoteSymbol()` and returns
+        the currency pair in a form of a hash array/dictionary with ``From``
+        and ``To`` indices.
+
+        Args:
+            symbol (str): *Quote symbol* representing a currency pair.
+
+        Returns:
+            Dictionary with ``From`` and ``To`` indices, or None.
+        """
+        if symbol is None or not isinstance(symbol, str):
+            raise TypeError(str(symbol))
+            return None
+        if symbol[-2:] == '=X':
+            symbol = symbol[:-2]
+            f = symbol[-3:]
+            t = symbol[:-3]
+            return {'From': f, 'To': t, 'Pair': [t, f]}
+        else:
+            raise ValueError(f'{symbol} -> {symbol[-2:]}')
+            return None
+
+    @classmethod
     def toFxSymbol(cls, **kwargs):
         """Composes a currency/forex (FX) pair symbol to use in the string representation
         of DB records.
 
         The distinction to `toQuoteSymbol()` is that the *FX symbol* can only include word
         characters, dash (`-`) and a dot (`.`). The *quote symbol* represents the FX pair
-        ticker for `yfinance`.
+        ticker for `yfinance`. Hence for the "EUR/USD" pair, the *FX symbol* and *quote
+        symbol* is `EUR-USD` and `EURUSD=X`, respectively.
 
         Kwargs:
             To (str): *To* currency of the FX pair.
@@ -895,6 +1059,9 @@ class FxQuote(Quote):
         Returns:
             String representing the *FX symbol* of the FX pair.
         """
+
+        if 'Pair' in kwargs and isinstance(kwargs['Pair'], list) and len(kwargs['Pair']) > 1:
+            return kwargs['Pair'][0] + '-' + kwargs['Pair'][1]
 
         for k in ['To', 'From']:
             if k not in kwargs or kwargs[k] is None:
