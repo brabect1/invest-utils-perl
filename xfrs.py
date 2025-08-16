@@ -230,14 +230,14 @@ def isStock(dbh, symbol):
     return len(rows) > 0 and len(rows[0]) > 0 and rows[0][0] > 0
 
 
-def getDividends(dbh, **kwargs):
+def getDividends(dbh, symbols=None, **kwargs):
     """Gets a list of dividends, either all or those limited to a symbol subset.
     
     Args:
       dbh: Reference to the open DB connection.
+      symbols (list): list of symbols for which to get deividends
 
     Kwargs:
-      syms (list): list of symbols for which to get deividends
       order (str): results oredering (allowed: ``date`` (default), ``symbol``)
       fromDate (str): YYYY-MM-DD formatted date from which onwards to get dividends
       toDate (str): YYYY-MM-DD formatted latest date by which to get dividends
@@ -255,6 +255,9 @@ def getDividends(dbh, **kwargs):
         order = 'source_curr'
 
     filters = ['type=\'dividend\'']
+
+    if symbols is not None:
+        filters.append('source_curr in (' + ','.join(['\'' + s + '\'' for s in symbols]) + ')')
 
     if 'fromDate' in kwargs and kwargs['fromDate'] is not None:
         try:
@@ -291,6 +294,56 @@ def getDividends(dbh, **kwargs):
             })
 
     return dividends
+
+
+def getDividendSum(dbh, symbols=None, **kwargs):
+    """Gets the sum of all dividends (reduced by a withholding tax) per stock
+    in DB, either all or those limited to a symbol subset.
+
+    Args:
+      dbh: Reference to the open DB connection.
+      symbols (list): list of symbols, dividend sum of which to get;
+                      `None` means all symbols in DB
+
+    Kwargs:
+      fromDate (str): YYYY-MM-DD formatted date from which onwards to get dividends
+      toDate (str): YYYY-MM-DD formatted latest date by which to get dividends
+
+    Returns:
+      dict: The return value is a hash array indexed by symbol and with values
+            being the sum of all received dividends for that stock, less tax
+            paid.
+    """
+
+    syms = None
+    if symbols is not None:
+        syms = symbols
+    else:
+        syms = xfrs.getStocks(dbh)
+
+    divs = getDividends(dbh, symbols, **kwargs)
+    if divs is None: return None
+
+    sums = dict()
+    currs = dict()
+    for d in divs:
+        s = d['symbol']
+        if s not in sums:
+            sums[s] = 0
+            currs[s] = d['currency']
+
+        # currency sanity check
+        if currs[s] != d['currency']:
+            print(f'Error: Inconsisten dividend currency (exp. {currs[s]}: {d}', file=sys.stderr)
+            continue
+
+        sums[s] += d['amount'] - d['tax']
+
+    # add zero value for symbols missing in the hash array
+    for s in [s for s in syms if s not in sums]:
+        sums[s] = 0
+
+    return sums
 
 
 def cacheQuote(dbh, symbol, quote):
@@ -624,7 +677,8 @@ def getBalance(dbh, symbols = None):
 
     Args:
       dbh: reference to the open DB connection
-      symbols (list): reference to a hash array to be filled with a balance
+      symbols (list): list of symbols, balance of which to get; `None` means all
+                      symbols in DB
 
     Returns:
       Dictionary indexed by symbol.
@@ -697,7 +751,7 @@ def getBalance(dbh, symbols = None):
     return balances
 
 
-def getNAV(dbh, symbols):
+def getNAV(dbh, symbols=None):
     """Gets the net asset value (NAV) for the given symbols.
 
     The NAV value is returned with indication of the currency (e.g. 30.25USD).
@@ -749,6 +803,119 @@ def getNAV(dbh, symbols):
     navs.update({s: '???' for s in symbols if s not in navs})
 
     return navs
+
+
+def getInvestedAmount(dbh, symbols=None):
+    """Gets the (remaining) invested amount for a stock symbol in the given DB.
+
+    The invested amount is calculated as the investment for all buy transactions
+    less the corresponding value from sell transactions. The transactions are
+    considered in stock units and the remaining number is translated into the
+    remaining invested value.
+
+    The invested value is computed on the FIFO basis and hence the first unit bought
+    is considered the first unit sold. The remaining invested value thus represents
+    the value paid for last, yet unsold stock units.
+
+    Commissions for transactions of yet unsold stock units increase the investment
+    value. Once all of the units of buy transaction are sold, the commission (for
+    both the buy and sell transactions) is transferred to reduce the realized gain
+    and hence removed from the remaining invested value.
+
+    Args:
+        dbh: reference to the open DB connection
+        symbols (list): list of tickers for which to calculate the invested amount,
+                        if ``None`` then all symbols in DB apply
+
+    Returns:
+        A hash array indexed by symbol and filled with investment price records.
+    """
+
+    if dbh is None: return None
+    cursor = dbh.cursor()
+
+    if symbols is None:
+        symbols = getSymbols(dbh)
+
+    amounts = {s: 0 for s in symbols}
+
+    for s in symbols:
+        balance = 0
+
+        if isStock(dbh,s):
+            # get amounts that directly increase or decrease the balance
+            stmt = 'select type, amount, unit_price, unit_curr, comm_price, comm_curr, date from xfrs where type in (\'buy\',\'sell\')'
+            stmt += f" and source_curr='{s}'";
+            stmt += " order by date;";
+            cursor.execute(stmt)
+
+            curr = None
+            xfers = list()
+            for row in cursor.fetchall():
+
+                # set the currency based on the 1st transaction record
+                if curr is None: curr = row[3]
+
+                # skip the record if wrong unit currency
+                if curr != row[3]:
+                    print(f"Error: Unexpected unit currency ({row[0]} {row[1]} {s} units on {row[6]}): act={row[3]}, exp={curr}", file=sys.stderr)
+                    continue
+
+                # invalidate commission if wrong currency
+                if curr != row[5]:
+                    print("Error: Unexpected commision currency ({row[0]} {row[1]} {s} units on {row[6]}): act={row[5]}, exp={curr}", file=sys.stderr)
+                    row[4] = 0
+
+                # act per the transaction type
+                if row[0] == 'sell':
+                    units = -row[1]
+                    for rb in xfers:
+                        units += rb['units']
+
+                        # clear all the bought units if sold more
+                        # than in the buy `rb` transaction, else
+                        # update with what remained
+                        if units < 0:
+                            rb['units'] = 0
+                        else:
+                            rb['units'] = units;
+                            break
+
+                    # sanity check:
+                    if units < 0:
+                        print(f"Error: Selling more than bought ({row[0]} {row[1]} {s} units on {row[6]}): num={-units}", file=sys.stderr)
+
+                elif row[0] == 'buy':
+                    # add a new record into the transactions list
+                    xfers.append({
+                        'units': row[1],
+                        'price': row[2],
+                        'curr': row[3],
+                        'comm': row[4],
+                        })
+
+                else:
+                    print("Error: Unknown transaction type: {row[0]}", file=sys.stderr)
+
+
+            # compute the invested value based on what has been left from
+            # buy transactions
+            for rb in xfers:
+                balance += rb['units'] * rb['price'] + (rb['comm'] if rb['units'] > 0 else 0)
+
+        elif isCurrency(dbh, s):
+            # get balance of the given symbol
+            # (For a currency the actual balance represents the remaining invested amount.)
+            balances = getBalance(dbh, [s,]);
+            balance = balances[s]
+
+        else:
+            # unknown symbol
+            continue
+
+        amounts[s] = balance
+
+    return amounts
 
 
 class Price(object):

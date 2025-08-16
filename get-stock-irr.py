@@ -129,3 +129,8 @@ for s in symbols:
         for k, v in cashflow.items():
             print("\t", '\t'.join(['#', s, k, str(v)]))
 
+# close DB
+# --------
+dbh.commit()
+dbh.close()
+

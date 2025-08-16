@@ -32,11 +32,23 @@ parser.add_argument('-t', '--to', type=str,
         help="Return only records by this date. Format YYYY-MM-DD.",
         )
 
+# `symbols` option: Space separated list of stock symbols.
+parser.add_argument('-s', '--symbols', type=str,
+        default=None, dest='symbols',
+        help="Space separated list of symbols to which limit the dividends.",
+        )
+
 args = parser.parse_args()
 
 dbh = sqlite3.connect(args.db)
 
-divs = xfrs.getDividends(dbh, order=args.order, fromDate=args.fromDate, toDate=args.toDate)
+# resolve symbols
+symbols = None; # default, means all from DB
+if args.symbols is not None:
+    symbols = args.symbols.split()
+
+# query dividends
+divs = xfrs.getDividends(dbh, symbols, order=args.order, fromDate=args.fromDate, toDate=args.toDate)
 
 dbh.commit()
 dbh.close()
