@@ -828,7 +828,9 @@ def getInvestedAmount(dbh, symbols=None):
                         if ``None`` then all symbols in DB apply
 
     Returns:
-        A hash array indexed by symbol and filled with investment price records.
+        A hash array indexed by symbol and filled with investment value records.
+        Amounts in the array come without a currency, which corresponds to the
+        currency of transactions for each symbol.
     """
 
     if dbh is None: return None
@@ -844,7 +846,7 @@ def getInvestedAmount(dbh, symbols=None):
 
         if isStock(dbh,s):
             # get amounts that directly increase or decrease the balance
-            stmt = 'select type, amount, unit_price, unit_curr, comm_price, comm_curr, date from xfrs where type in (\'buy\',\'sell\')'
+            stmt = "select type, amount, unit_price, unit_curr, comm_price, comm_curr, date from xfrs where type in ('buy','sell')"
             stmt += f" and source_curr='{s}'";
             stmt += " order by date;";
             cursor.execute(stmt)
@@ -913,9 +915,411 @@ def getInvestedAmount(dbh, symbols=None):
             # unknown symbol
             continue
 
+        # update records in the result
         amounts[s] = balance
 
     return amounts
+
+
+def  getTotalInvestedAmount(dbh, symbols=None):
+    """Gets the total value, per symbol, invested into `symbols` over time.
+
+    The total invested amount consists of the price paid for all units bought and
+    commissions paid for all buy and sell transactions. This total amount can be
+    used as a basis to compute the percentage of realized/unrealized gain.
+
+    Note that the total amount accumulates over the lifetime of the portfolio. If
+    one flips the same security over and over again, it will count all the flips.
+    For example, buying AAPL for 1000USD, then selling it for 1200USD, than buying
+    it again for 1000USD and selling for 1500USD will yield the total invested
+    amount of 2000USD, plus any commission paid on all four trasacrions.
+
+    The same applies for deposits and withdrawals of cash. However, while flipping
+    stocks is to provide fair performance measures, depositing and withdrawing cash
+    might skew the total portfolio performance.
+
+    Args:
+        dbh: reference to the open DB connection
+        symbols (list): list of tickers for which to calculate the invested amount,
+                        if ``None`` then all symbols in DB apply
+
+    Returns:
+        A hash array indexed by symbols and filled with investment value records.
+        Amounts in the array come without a currency, which corresponds to the
+        currency of transactions for each symbol.
+    """
+
+    if dbh is None: return None
+    cursor = dbh.cursor()
+
+    if symbols is None:
+        symbols = getSymbols(dbh)
+
+    amounts = {s: 0 for s in symbols}
+
+    for s in symbols:
+        balance = 0
+
+        if isStock(dbh, s):
+
+            # get amounts that directly increase or decrease the balance
+            stmt = "select type, amount, unit_price, unit_curr, comm_price, comm_curr, date from xfrs where type in ('buy','sell')"
+            stmt += f" and source_curr='{s}'"
+            stmt += " order by date;";
+            cursor.execute(stmt)
+
+            curr = None
+            for row in cursor.fetchall():
+
+                # set the currency based on the 1st transaction record
+                if curr is None: curr = row[3]
+
+                # skip the record if wrong unit currency
+                if curr != row[3]:
+                    print(f"Error: Unexpected unit currency ({row[0]} {row[1]} {s} units on {row[6]}): act={row[3]}, exp={curr}", file=sys.stderr)
+                    continue
+
+                # invalidate commission if wrong currency
+                if curr != row[5]:
+                    print("Error: Unexpected commision currency ({row[0]} {row[1]} {s} units on {row[6]}): act={row[5]}, exp={curr}", file=sys.stderr)
+                    row[4] = 0
+
+
+                # act per the transaction type
+                if row[0] == 'sell':
+                    # For a sell transactions count only the commission.
+                    balance += row[4]
+                elif row[0] == 'buy':
+                    # For a buy transaction count the buy price plus the commission.
+                    balance += row[1] * row[2] + row[4]
+                else:
+                    print(f"Error: Unknown transaction type: {row[0]}", file=sys.stderr)
+
+        elif isCurrency(dbh, s):
+            # TODO 2017-12-24: This is temporary solution that only counts deposits and withdrawals.
+            #                  We might also consider currency translations, but that would depend
+            #                  on how the 'invested amount' is supposed to be used. If we care about
+            #                  how much money we put into the account and how much we took back, then
+            #                  the current approach is correct. If we were after efficiency of investments
+            #                  in individual currencies (incl. both stock and cash), then we would
+            #                  need to consider translations too.
+            #
+            #                  Also if deposits and withdrawals were in different currencies, we would
+            #                  likely need to convert into a base currency at the date of the transaction,
+            #                  as translating only the final balance would not correctly represent the
+            #                  asset value of the investment.
+
+            # get amounts that directly increase or decrease the balance
+            stmt = f"select type, amount, unit_price, unit_curr, comm_price, comm_curr, date from xfrs where type in ('deposit','withdraw')"
+            stmt += f" and source_curr='{s}'"
+            stmt += " order by date;"
+            cursor.execute(stmt)
+
+            curr = s
+            xfers = list()
+            for row in cursor.fetchall():
+
+                # skip the record if wrong unit currency
+                if curr != row[3]:
+                    print(f"Error: Unexpected unit currency ({row[0]} {row[1]} {s} units on {row[6]}): act={row[3]}, exp={curr}", file=sys.stderr)
+                    continue
+
+                # invalidate commission if wrong currency
+                if curr != row[5]:
+                    print(f"Error: Unexpected commision currency ({row[0]} {row[1]} {s} units on {row[6]}): act={row[5]}, exp={curr}", file=sys.stderr)
+                    row[4] = 0
+
+                # act per the transaction type
+                if row[0] =='withdraw':
+                    # ignore the withdrawn amount as it does not change the money pushed
+                    # into the system
+
+                    # ignore the commission as it would be covered from the remaining balance and does
+                    # not affect the value of the investment
+                    # (Note: If deposits and withdrawals incurred any commissions, then there will be
+                    # a residual investment after a withdrawal that would clear the balance, and that
+                    # residual amount would equal the sum of all related commissions.)
+                    pass
+                elif row[0] == 'deposit':
+                    # ignore the commission as it would be covered from the deposited amount
+                    balance += row[1] * row[2]
+                else:
+                    print(f"Error: Unknown transaction type: {row[0]}", file=sys.stderr)
+
+        else:
+            # unknown symbol
+            continue
+
+        # update records in the result
+        amounts[s] = balance
+
+    return amounts
+
+
+def getTotalSellValue(dbh, symbols=None):
+    """Gets the value earned on all *sell* transactions.
+
+    The value does not count commissions paid for the sell transactions. Hence
+    to get a real amount earned on selling, one would need to reduce the total
+    sell value by the amount paid for sell commissions.
+
+    Args:
+        dbh: reference to the open DB connection
+        symbols (list): list of tickers for which to calculate the value of sold units,
+                        if ``None`` then all symbols in DB apply
+
+    Returns:
+        A hash array indexed by symbols and filled with *sell* value records.
+        Amounts in the array come without a currency, which corresponds to the
+        currency of transactions for each symbol.
+    """
+
+    if dbh is None: return None
+    cursor = dbh.cursor()
+
+    if symbols is None:
+        symbols = getSymbols(dbh)
+
+    values = {s: 0 for s in symbols}
+
+    for s in symbols:
+
+#TODO The code below could be reduced to a single SQL query: select sum(amount*unit_price) from ... 
+#
+#        stmt = "select sum(amount * unit_price) from xfrs where type='sell'"
+#        stmt += f" and source_curr='{s}'"
+#        stmt += " order by date;"
+#        cursor.execute(stmt)
+#        rows = cursor.fetchall()
+#        if len(rows) > 0 and rows[0][0] is not None:
+#            #if values[s] != rows[0][0]:
+#            #    print(f'>> {s}: mismatch: {values[s]} vs {rows[0][0]}', file=sys.stderr)
+#            values[s] = rows[0][0]
+#---->>>>
+        stmt = "select type, amount, unit_price, unit_curr, comm_price, comm_curr, date from xfrs where type='sell'"
+        stmt += f" and source_curr='{s}'"
+        stmt += " order by date;"
+        cursor.execute(stmt)
+
+        balance = 0
+        curr = None
+        for row in cursor.fetchall():
+
+            # set the currency based on the 1st transaction record
+            if curr is None: curr = row[3]
+
+            # skip the record if wrong unit currency
+            if curr != row[3]:
+                print(f"Error: Unexpected unit currency ({row[0]} {row[1]} {s} units on {row[6]}): act={row[3]}, exp={curr}", file=sys.stderr)
+                continue
+
+            # invalidate commission if wrong currency
+            if curr != row[5]:
+                print("Error: Unexpected commision currency ({row[0]} {row[1]} {s} units on {row[6]}): act={row[5]}, exp={curr}", file=sys.stderr)
+                row[4] = 0
+
+            # act per the transaction type
+            if row[0] == 'sell':
+                # Take only the sell price and ignore commission.
+                balance += row[1] * row[2]
+            else:
+                print(f"Error: Unknown transaction type: {row[0]}", file=sys.stderr)
+
+        # update records in the result
+        values[s] = balance
+#<<<<----
+
+    return values
+
+
+def getSellGain(dbh, symbols=None):
+    """Gets the selling gain value for the investment.
+
+    The selling gain is computed as the value of shares sold less the buying
+    price of those shares less commissions incurred for the transactions.
+
+    The buy commissions are counted in for selling the last share of the
+    corresponding buy transaction. Thus for example, buying ten shares and
+    then selling nine of them will reduce the gain only by the selling
+    commission as there is still one share being held from the buying
+    transaction. This may seem a bit pessimistic, but it makes the accounting
+    somewhat easier (as opposed to using proportional commission price for
+    every share). It also makes the accounting more accurate by avoiding
+    rounding errors on "fractional" commissions.
+
+    Args:
+        dbh: reference to the open DB connection
+        symbols (list): list of tickers for which to calculate the value of sold units,
+                        if ``None`` then all symbols in DB apply
+
+    Returns:
+        A hash array indexed by symbols and filled with gain value records.
+        Amounts in the array come without a currency, which corresponds to the
+        currency of transactions for each symbol.
+    """
+
+    if dbh is None: return None
+    cursor = dbh.cursor()
+
+    if symbols is None:
+        symbols = getSymbols(dbh)
+
+    values = {s: 0 for s in symbols}
+
+    for s in symbols:
+        balance = 0
+
+        if isStock(dbh, s):
+
+            # get buy and sell transactions for the symbol
+            stmt = "select type, amount, unit_price, unit_curr, comm_price, comm_curr, date from xfrs where type in ('buy','sell')"
+            stmt += f" and source_curr='{s}'"
+            stmt += " order by date;";
+            cursor.execute(stmt)
+
+            curr = None
+            xfers = list()
+            for row in cursor.fetchall():
+
+                # set the currency based on the 1st transaction record
+                if curr is None: curr = row[3]
+
+                # skip the record if wrong unit currency
+                if curr != row[3]:
+                    print(f"Error: Unexpected unit currency ({row[0]} {row[1]} {s} units on {row[6]}): act={row[3]}, exp={curr}", file=sys.stderr)
+                    continue
+
+                # invalidate commission if wrong currency
+                if curr != row[5]:
+                    print("Error: Unexpected commision currency ({row[0]} {row[1]} {s} units on {row[6]}): act={row[5]}, exp={curr}", file=sys.stderr)
+                    row[4] = 0
+
+
+                # act per the transaction type
+                if row[0] == 'sell':
+                    # For a sell transaction count the sell price less the commission.
+                    balance += row[1] * row[2] - row[4]
+
+                    units = -row[1]
+                    for rb in xfers:
+                        # skip the buy transaction if already depleated
+                        # (i.e. no more units left from the transaction)
+                        if rb['units'] == 0: continue
+
+                        # recover sell units from the buy transaction
+                        units += rb['units']
+
+                        # discount the bought units and buy commissions if
+                        # the buy transaction gets fully cleared (i.e. selling
+                        # more units than what remains of the `rb` buy transaction)
+                        if units <= 0:
+                            # clearing the whole buy transaction => discount also buy commission
+                            balance -= rb['units'] * rb['price'] + rb['comm']
+                            rb['units'] = 0
+                        else:
+                            # some units remained from the buy transaction
+                            balance -= (rb['units'] - units) * rb['price']
+                            rb['units'] = units
+                            break
+
+                    # sanity check:
+                    if units < 0:
+                        print(f"Error: Selling more than bought ({row[0]} {row[1]} {s} units on {row[6]}): num={-units}", file=sys.stderr)
+                elif row[0] == 'buy':
+                    # add a new record into the transactions list
+                    xfers.append({
+                        'units': row[1],
+                        'price': row[2],
+                        'curr': row[3],
+                        'comm': row[4],
+                        })
+                else:
+                    print(f"Error: Unknown transaction type: {row[0]}", file=sys.stderr)
+
+        else:
+            # unknown or currency symbol
+            continue
+
+        # update records in the result
+        values[s] = balance
+
+    return values
+
+#TODO 17-Aug-2025: As `getStockTransactions()` is primarily for XIRR comps,
+#     it would make more sense to change it to `getStockXirr()` and let
+#     `getStockTransactions()` become more generic, possibly returning
+#     a list of dict's or a (pandas) DataFrame.
+def getStockTransactions(dbh, symbols=None, **kwargs):
+    """
+    Args:
+        dbh: reference to the open DB connection
+        symbols (list): list of tickers for which to get transactions,
+                        if ``None`` then all *stock* symbols in DB apply
+
+    Returns:
+        A `zip()` of dates list, amounts list and symbol list, all lists having
+        corresponding entries on the same index and ordered by increasing date.
+        Amounts are signed such that values increasing the investment (e.g. buy)
+        are negative and values decreasing the investment (e.g. sell) are positive.
+        All transaction amounts include commission expense  such that the commission
+        increases the (absolute) value of buy and decreases value of sell.
+        Amounts come without a currency, which corresponds to the currency of
+        transactions for each symbol.
+    """
+# ***tbd*** get all stock transactions
+# will return a hash indexed by date and amounts decreasing (sell) and increasing (buy) net asset value
+# each item includes the commissions expense
+
+    if dbh is None: return None
+    cursor = dbh.cursor()
+
+    order = 'date'
+    #TODO if 'order' in kwargs and kwargs['order'] == 'symbol':
+    #TODO     order = 'source_curr'
+
+    filters = ["type in ('sell','buy')"]
+
+    if symbols is not None:
+        filters.append('source_curr in (' + ','.join(['\'' + s + '\'' for s in symbols]) + ')')
+
+    if 'fromDate' in kwargs and kwargs['fromDate'] is not None:
+        try:
+            d = datetime.datetime.strptime(kwargs["fromDate"], '%Y-%m-%d')
+            filters.append(f'date>=\'{d.strftime("%Y-%m-%d")}\'')
+        except ValueError:
+            # ignore wrong argument
+            pass
+
+    if 'toDate' in kwargs and kwargs['toDate'] is not None:
+        try:
+            d = datetime.datetime.strptime(kwargs["toDate"], '%Y-%m-%d')
+            filters.append(f'date<=\'{d.strftime("%Y-%m-%d")}\'')
+        except ValueError:
+            # ignore wrong argument
+            pass
+
+    stmt = f'select type, source_curr, unit_curr, amount*unit_price, comm_price, date from xfrs where (' + \
+            ' and '.join(filters) + \
+            f') order by {order};'
+    cursor = dbh.cursor()
+    cursor.execute(stmt)
+
+    dates = list()
+    amounts = list()
+    syms = list()
+    for row in cursor.fetchall():
+        if len(row) < 6: continue
+
+        if row[0] == 'buy':
+            amounts.append(-(row[3] + row[4]))
+        elif row[0] == 'sell':
+            amounts.append(row[3] - row[4])
+        else:
+            continue
+        syms.append(row[1])
+        dates.append(row[5])
+
+    return zip(dates, amounts, syms)
 
 
 class Price(object):
