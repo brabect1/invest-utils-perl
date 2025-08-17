@@ -77,7 +77,7 @@ quotes = dict()
 
 # obtain cached quotes
 for s, q in xfrs.getCachedQuote(dbh, list(symbols), date = date).items():
-    q['status'] = 'cached'
+    q['status'] = 'cached.' + q['type']
     quotes[s] = q
 
 # obtain online quotes

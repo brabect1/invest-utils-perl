@@ -28,6 +28,12 @@ parser.add_argument('-s', '--symbols', type=str,
         help="Space separated list of stock symbols to quote and cache.",
         )
 
+# `date` option: Letting users select other date than today.
+parser.add_argument('--date', type=str,
+        default=None, dest='date',
+        help="Get quote on this date. Format YYYY-MM-DD.",
+        )
+
 args = parser.parse_args()
 
 dbh = sqlite3.connect(args.db)
@@ -36,7 +42,10 @@ cursor = dbh.cursor()
 # Capture present date. We will cache one quote per day as the whole
 # utils package is not meant for realtime monitoring but rather for
 # a one time use.
-date = datetime.date.today().strftime("%Y-%m-%d")
+if args.date is None:
+    date = datetime.date.today().strftime("%Y-%m-%d")
+else:
+    date = args.date
 
 if args.symbols is not None:
     # use symbols given from command line
@@ -49,16 +58,9 @@ else:
 # collect stock quotes
 # --------------------
 quotes = {}
-for s in stocks:
-    qs = yfinance.Ticker(s)
-    q = { 'regularMarketPrice': None, 'currency': None }
-    try:
-        for a in q.keys():
-            q[a] = qs.info[a]
-        quotes[s] = {'price': q['regularMarketPrice'], 'currency': q['currency']}
-    except:
-        pass
-
+quotes = xfrs.getOnlineQuote(stocks, date = date)
+for s in quotes.keys():
+    quotes[s]['status'] = 'online'
 
 # collect currency quotes
 # -----------------------
@@ -70,21 +72,19 @@ if args.baseCurrency is not None:
         # skip base currency
         if c == args.baseCurrency: continue
 
+        #TODO 17-Aug-2025: It would make more sense to get the currency quote
+        #     as of today, too, as we are likely to use the today's quote to
+        #     translate to the base currency.
         s = xfrs.FxQuote.toQuoteSymbol(To=c, From=args.baseCurrency)
-        qs = yfinance.Ticker(s)
-        q = { 'regularMarketPrice': None, 'currency': None }
-        try:
-            for a in q.keys():
-                q[a] = qs.info[a]
-            quotes[s] = {'price': q['regularMarketPrice'], 'currency': q['currency']}
-        except:
-            pass
+        cquotes = xfrs.getOnlineQuote([s,], date=date)
+        if s in cquotes:
+            quotes[s] = cquotes[s]
 
 
 # print quotes
 # --------------
 for s,q in quotes.items():
-    print(f'{s}:\t{q["price"]} {q["currency"]}')
+    print(f'{s} @ {q["date"]}:\t{q["price"]} {q["currency"]}')
 
 
 # update DB

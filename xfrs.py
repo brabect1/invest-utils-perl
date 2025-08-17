@@ -3,7 +3,7 @@ import datetime
 import yfinance
 import numbers
 from abc import ABC, abstractmethod
-
+import sys
 
 ALLOWED_RECORDS = {'buy', 'sell', 'dividend', 'fx', 'deposit', 'withdraw', 'quote'}
 """(constant) List of recognized DB records.
@@ -445,19 +445,24 @@ def getOnlineQuote(symbols, **kwargs):
         q = { 'regularMarketPrice': None, 'currency': None}
         try:
             if date is None:
-                for a in q.keys():
-                    q[a] = qs.info[a]
-                lquotes.append({
-                        'symbol': s,
-                        'price': q['regularMarketPrice'],
-                        'currency': q['currency'],
-                        'date': stoday,
-                        'type': 'real',
-                        })
+                try:
+                    for a in q.keys():
+                        q[a] = qs.info[a]
+                    lquotes.append({
+                            'symbol': s,
+                            'price': q['regularMarketPrice'],
+                            'currency': q['currency'],
+                            'date': stoday,
+                            'type': 'real',
+                            })
+                except KeyError:
+                    # this may be due to a non-existing symbol or a non-stock
+                    # asset
+                    pass
             else:
                 # use `end=date+1` as the `history()` method does not include the end date
                 # use `start=date-7` to span potential weekend and holiday days
-                df = qs.history(start=date - datetime.timedelta(days=7), end=date + datetime.timedelta(days=1)).tail(1)
+                df = qs.history(start=date - datetime.timedelta(days=7), end=date + datetime.timedelta(days=1), raise_errors=True).tail(1)
 
                 # currency
                 curr = qs.info['currency']
@@ -477,7 +482,9 @@ def getOnlineQuote(symbols, **kwargs):
                             'type': 'close',
                             })
 
-        except:
+        except yfinance.exceptions.YFException as e:
+            # this is possibly due to some error (e.g. delisted or wrong
+            # symbol)
             pass
 
     if 'cache' in kwargs and kwargs['cache']:
@@ -534,6 +541,7 @@ def getCachedQuote(dbh, symbols, **kwargs):
     # query existing DB quotes
     if cacheExists:
         for s in symbols:
+            # try to get the exact quote
             stmt = f'SELECT price, curr, type from quotes where date=\'{date}\' AND symbol=\'{s}\';'
             cursor.execute(stmt)
             rows = cursor.fetchall()
@@ -546,6 +554,45 @@ def getCachedQuote(dbh, symbols, **kwargs):
                         'type': rows[0][2],
                         }
 
+    # falling back on "known" quotes
+    # (A *known* quote comes from trades and quotes recorded in DB. One particular
+    # example may be a delisted stock.)
+    if len(symbols) > len(quotes.keys()):
+        for s in [s for s in symbols if s not in quotes]:
+
+            # try to get recorded quotes before the date with `delist` type
+            stmt = f'SELECT price, curr, type from quotes where date < \'{date}\' AND type = \'delist\' AND symbol=\'{s}\' order by date desc;'
+            cursor.execute(stmt)
+            rows = cursor.fetchall()
+            if len(rows) > 0:
+                quotes[s] = {
+                        'symbol': s,
+                        'price': rows[0][0],
+                        'currency': rows[0][1],
+                        'date': sdate,
+                        'type': rows[0][2],
+                        }
+                continue
+
+            # see if not traded on that date
+            stmt = "select type, amount, unit_price, unit_curr, comm_price, comm_curr, date from xfrs where type in ('buy','sell')"
+            stmt += f" and source_curr='{s}'"
+            stmt += f" and date='{date}'"
+            stmt += ';'
+            cursor.execute(stmt)
+            rows = cursor.fetchall()
+            if len(rows) > 0:
+                # use the latest record (assuming if several trades on the same date, they
+                # had been inserted in the serial order)
+                quotes[s] = {
+                        'symbol': s,
+                        'price': rows[-1][2],
+                        'currency': rows[-1][3],
+                        'date': sdate,
+                        'type': rows[-1][0],
+                        }
+                continue
+
     # falling back online for missing symbols
     if fallbackOnline and len(symbols) > len(quotes.keys()):
         onlineQuotes = getOnlineQuote(
@@ -553,6 +600,7 @@ def getCachedQuote(dbh, symbols, **kwargs):
                 dbh = dbh, date = sdate, cache = True
                 )
         quotes.update(onlineQuotes)
+
 
     return quotes
 
