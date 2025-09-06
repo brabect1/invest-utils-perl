@@ -3,6 +3,7 @@ import sys
 import xfrs
 import argparse
 import datetime
+import math
 import yfinance
 
 
@@ -62,6 +63,14 @@ quotes = xfrs.getOnlineQuote(stocks, date = date)
 for s in quotes.keys():
     quotes[s]['status'] = 'online'
 
+# add records for stockes that failed an on-line quote
+for s in (s for s in stocks if s not in quotes):
+    quotes[s] = {
+        'date': date,
+        'price': float('NaN'),
+        'currency': '???',
+        }
+
 # collect currency quotes
 # -----------------------
 if args.baseCurrency is not None:
@@ -83,14 +92,16 @@ if args.baseCurrency is not None:
 
 # print quotes
 # --------------
-for s,q in quotes.items():
+for s in sorted(stocks):
+    q = quotes[s]
     print(f'{s} @ {q["date"]}:\t{q["price"]} {q["currency"]}')
 
 
 # update DB
 # ---------
 for s,q in quotes.items():
-    xfrs.cacheQuote(dbh, s, q)
+    if not math.isnan(q['price']):
+        xfrs.cacheQuote(dbh, s, q)
 
 
 # close DB
