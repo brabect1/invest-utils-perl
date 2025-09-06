@@ -25,7 +25,7 @@ parser.add_argument('-d', '--db', type=str,
 # `format` option: Type of the output format.
 parser.add_argument('--format', type=str, choices = ['xfrs', 'json', 'csv'],
         default='xfrs', dest='format',
-        help="Export output format.",
+        help="Import input format.",
         )
 
 # `force` option: If to overwrite/update the existing DB.
@@ -39,7 +39,7 @@ args = parser.parse_args()
 # Test arguments
 # --------------
 if args.format not in {'xfrs'}:
-    sys.exit(f'Export to \'{args.format}\' not implemented!')
+    sys.exit(f'Import from \'{args.format}\' not implemented!')
 
 if os.path.isfile(args.db) and not args.force:
     sys.exit(f'File \'{args.db}\' already exists. Use `--force` to overwrite/update.')
