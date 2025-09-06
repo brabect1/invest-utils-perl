@@ -118,7 +118,7 @@ for s in stocks:
         props[s]['total_gain_percent'] =  props[s]['total_gain']*100/props[s]['total_investment']
     else:
         print(f"!!!cur!!! {s}")
-        props[s]['curr'] = '???'
+        props[s]['curr'] = xfrs.getStockCurrency(dbh, s) or '???'
         props[s]['real_gain'] = float('NaN')
         props[s]['unreal_gain'] =  float('NaN')
         props[s]['total_gain'] =  float('NaN')

@@ -43,7 +43,18 @@ def addRecord(dbh, record):
     Hence the quote record would be updated should it already exist in DB.
 
     The `record` is a list of strings of the following meaning:
+
     0. Record type.
+    1. Date of the recorded information.
+    2. Amount (e.g. number of stock shares or the target value of fx/curency conversion).
+    3. Price per unit of the amount of buy/sell/quote reocrds.
+    4. Currency of the amount.
+    5. source price represents the fx/currency conversion rate
+       (i.e. price in the source currency for a unit of the target currency).
+    6. Source identification: For sell/buy/dividend/quote recirds represent the symnol,
+       for fx/currency conversion represnets represents the conversion source currency.
+    7. Commission price.
+    8. Commission currency.
 
     Args:
         dbh: reference to the open DB connection
@@ -91,7 +102,7 @@ def addRecord(dbh, record):
         cursor.execute(stmt)
 
         # get the record ID
-        stmt = 'SELECT COUNT(1) FROM xfrs;'
+        stmt = 'select count(id) from xfrs;'
         cursor.execute(stmt)
         row = cursor.fetchone()
         id = 0 if row is None else row[0]
@@ -346,6 +357,71 @@ def getDividendSum(dbh, symbols=None, **kwargs):
     return sums
 
 
+def getStockCurrency(dbh, symbol):
+    """Gets currency of a stock symbol.
+
+    Presently the currency is derived from records in DB with no attempt
+    of on-line quote. This is due to the expected use of the method, which
+    a user would call only on failed attemots of an on-line quote.
+
+    Args:
+      dbh: reference to the open DB connection
+      symbol (str): ticker of the stock or currency
+
+    Returns:
+      a string identification of the associated currency (e.g. ``USD``)
+      or `None` if no or contradicting results in DB
+    """
+
+    if dbh is None or symbol is None: return None
+
+    cursor = dbh.cursor()
+
+    curr = None
+
+    # test first if the transaction table exists
+    stmt = "select name from sqlite_master where type='table' and name='xfrs';"
+    cursor.execute(stmt)
+    rows = cursor.fetchall()
+
+    # query existing DB transfers
+    if len(rows) > 0:
+        stmt = f'select distinct unit_curr from xfrs where source_curr=\'{symbol}\';'
+        cursor.execute(stmt)
+        rows = cursor.fetchall()
+        if len(rows) > 0:
+            if len(rows) > 1:
+                # records with different currencies detected
+                return None
+            elif curr is None:
+                curr = rows[0][0]
+            elif curr != rows[0][0]:
+                # records with different currencies detected
+                return None
+
+    # test first if the quotes table exists
+    stmt = f"select name from sqlite_master where type='table' and name='quotes';"
+    cursor.execute(stmt)
+    rows = cursor.fetchall()
+
+    # query existing DB quotes
+    if len(rows) > 0:
+        stmt = f'select distinct curr from quotes where symbol=\'{symbol}\';'
+        cursor.execute(stmt)
+        rows = cursor.fetchall()
+        if len(rows) > 0:
+            if len(rows) > 1:
+                # quotes with different currencies detected
+                return None
+            elif curr is None:
+                curr = rows[0][0]
+            elif curr != rows[0][0]:
+                # quotes with different currencies detected
+                return None
+
+    return curr
+
+
 def cacheQuote(dbh, symbol, quote):
     """Adds a cached quote to DB.
 
@@ -392,8 +468,16 @@ def cacheQuote(dbh, symbol, quote):
 
     priceType = 'real' if 'type' not in quote else quote['type']
     if len(cursor.fetchall()) == 0:
+
+        # get the record ID
+        stmt = 'select count(id) from quotes;'
+        cursor.execute(stmt)
+        row = cursor.fetchone()
+        id = 0 if row is None else row[0]
+
         # no quote yet => create
-        stmt = "INSERT INTO quotes (symbol,date,type,price,curr) VALUES ("
+        stmt = "INSERT INTO quotes (id, symbol,date,type,price,curr) VALUES ("
+        stmt += f'\'{id}\','
         stmt += f'\'{symbol}\','
         stmt += f'\'{date}\','
         stmt += f'\'{priceType}\','
@@ -846,6 +930,11 @@ def getNAV(dbh, symbols=None):
             navs[s] = f'{q["price"] * balances[s]:.2f} {q["currency"]}'
         else:
             navs[s] = f'0 {q["currency"]}'
+
+    # undetermined but with no pending balance
+    for s in [s for s in symbols if s not in navs and s in balances and balances[s]==0]:
+        curr = getStockCurrency(dbh, s)
+        if curr is not None: navs[s] = '0 ' + curr
 
     # undetermined
     navs.update({s: '???' for s in symbols if s not in navs})
