@@ -26,6 +26,12 @@ parser.add_argument('-d', '--db', type=str,
         help="Path to the DB file.",
         )
 
+# `base` option: Symbol of the base currency.
+parser.add_argument('-b', '--base', type=str,
+        default=None, dest='baseCurrency',
+        help="Symbol of the base currency.",
+        )
+
 # `symbols` option: Space separated list of stock symbols.
 parser.add_argument('-s', '--symbols', type=str,
         default=None, dest='symbols',
@@ -285,60 +291,95 @@ for curr in sorted(totals.keys()):
     print("\t".join([fmt.format(p[c]) if isinstance(p[c], numbers.Number) else p[c] for c in cols_order]))
 
 
-#TODO # Print cacsh report
-#TODO # ------------------
-#TODO print("\n# Cash")
-#TODO print("\t".join([cols_name[c] for c in cols_order]))
-#TODO for curr in sorted(currencies):
-#TODO     p = props[curr]
-#TODO     print("\t".join([fmt.format(p[c]) if isinstance(p[c], numbers.Number) else p[c] for c in cols_order]))
-#TODO 
-#TODO 
-#TODO # Query FX conversion rates
-#TODO my %fx_rates;
-#TODO #my $q = Finance::Quote->new;
-#TODO foreach my $s (sort @currencies) {
-#TODO     if ($s eq $base) {
-#TODO         $fx_rates{$s} = 1.0;
-#TODO     } else {
-#TODO         my %qs = xfrs::getQuoteCurrency($dbh,'',$base,$s);
-#TODO         if (exists($qs{$s})) {
-#TODO             $fx_rates{$s} = $qs{$s}->{'price'};
-#TODO         } else {
-#TODO             print "Error: Failed to obtain conversion rate $s to $base!\n";
-#TODO         }
-#TODO     }
-#TODO }
-#TODO 
-#TODO # Add cash and stock balances together
-#TODO foreach my $s (sort @currencies) {
-#TODO     next unless (exists $stocks_total{$s});
-#TODO     my @cols = qw'nav dividend investment sell_gain';
-#TODO     foreach my $c (@cols) {
-#TODO         $props{$s}->{$c} += $stocks_total{$s}->{$c};
-#TODO     }
-#TODO }
-#TODO 
-#TODO # Get the sum over all currencies
-#TODO print(f"# Total {base}")
-#TODO foreach my $s (@currencies) {
-#TODO     next unless (exists $fx_rates{$s});
-#TODO     my @cols = qw'investment nav dividend sell_val sell_gain total_investment';
-#TODO     foreach my $c (@cols) {
-#TODO         $base_total{$base}->{$c} += $props{$s}->{$c} * $fx_rates{$s};
-#TODO     }
-#TODO }
-#TODO 
-#TODO # Calculate gain figures
-#TODO $base_total{$base}->{'real_gain'} =  $base_total{$base}->{'sell_gain'} + $base_total{$base}->{'dividend'};
-#TODO $base_total{$base}->{'unreal_gain'} =  $base_total{$base}->{'nav'} - $base_total{$base}->{'investment'};
-#TODO $base_total{$base}->{'total_gain'} =  $base_total{$base}->{'unreal_gain'} + $base_total{$base}->{'real_gain'};
-#TODO if ($base_total{$base}->{'total_investment'} == 0) {
-#TODO     $base_total{$base}->{'total_gain_percent'} = '???'; 
-#TODO } else {
-#TODO     $base_total{$base}->{'total_gain_percent'} =  sprintf("%.3f", $base_total{$base}->{'total_gain'}*100/$base_total{$base}->{'total_investment'});
-#TODO }
-#TODO 
+# Print cacsh report
+# ------------------
+print("\n# Cash")
+
+for s in currencies:
+    props[s] = {
+        'sym': s,
+        'curr': s,
+        'units': balance[s],
+        'nav': 0,
+        'sell_val': 0,
+        'sell_gain': 0,
+        'dividend': 0 if s not in dividends else dividends[s],
+        'investment': investment[s],
+        'total_investment': investment_tot[s],
+        'total_gain': 'n/a',
+        'total_gain_percent': 'n/a',
+        'irr': 'n/a',
+        }
+
+    m = rePrice.match(nav[s])
+    if m:
+        if m[3] != s: continue
+        props[s]['nav'] = float(m[1])
+    else:
+        props['nav'] = nav[s]
+
+# report
+print("\t".join([cols_name[c] for c in cols_order]))
+for curr in sorted(currencies):
+    p = props[curr]
+    print("\t".join([fmt.format(p[c]) if isinstance(p[c], numbers.Number) else p[c] for c in cols_order]))
+
+
+# Report total for a base currency
+# --------------------------------
+if args.baseCurrency is not None:
+    base_total = dict()
+    base_total[args.baseCurrency] = {
+        'sym': args.baseCurrency,
+        'curr': args.baseCurrency,
+        'units': 'n/a',
+        'nav': 0,
+        'dividend': 0,
+        'investment': 0,
+        'sell_val': 0,
+        'sell_gain': 0,
+        'total_investment': 0,
+        'irr': 'n/a',
+        }
+
+    # Query FX conversion rates
+    fx_rates = dict()
+    for c in currencies:
+        # skip base currency
+        if c == args.baseCurrency:
+            fx_rates[c] = 1.0
+        else:
+            s = xfrs.FxQuote.toQuoteSymbol(To=c, From=args.baseCurrency)
+            cquotes = xfrs.getOnlineQuote([s,], date=today)
+            if s in cquotes:
+                fx_rates[c] = cquotes[s]['price']
+            else:
+                print("Error: Failed to obtain conversion rate $s to $base!\n", file=sys.stderr);
+
+    # Add cash and stock balances together
+    for s in currencies:
+        if s not in totals[s]: continue
+        cols = ['nav', 'dividend', 'investment', 'sell_gain']
+        for c in cols:
+            props[s][c] += totals[s][c]
+
+    # Get the sum over all currencies
+    print(f"\n# Total {args.baseCurrency}")
+    for s in currencies:
+        if s not in fx_rates: continue
+        cols = ['investment', 'nav', 'dividend', 'sell_val', 'sell_gain', 'total_investment']
+        for c in cols:
+            base_total[args.baseCurrency][c] += props[s][c] * fx_rates[s]
+
+    # Calculate gain figures
+    base_total[args.baseCurrency]['real_gain'] = base_total[args.baseCurrency]['sell_gain'] + base_total[args.baseCurrency]['dividend']
+    base_total[args.baseCurrency]['unreal_gain'] = base_total[args.baseCurrency]['nav'] - base_total[args.baseCurrency]['investment']
+    base_total[args.baseCurrency]['total_gain'] = base_total[args.baseCurrency]['unreal_gain'] + base_total[args.baseCurrency]['real_gain']
+    if base_total[args.baseCurrency]['total_investment'] == 0:
+        base_total[args.baseCurrency]['total_gain_percent'] = '???'
+    else:
+        base_total[args.baseCurrency]['total_gain_percent'] =  base_total[args.baseCurrency]['total_gain']*100/base_total[args.baseCurrency]['total_investment']
+
 #TODO # Print results
 #TODO foreach my $c (@cols_order) {
 #TODO     my $val = '???';
@@ -347,6 +388,9 @@ for curr in sorted(totals.keys()):
 #TODO        $val = sprintf("%.".$np."f", $val) if Scalar::Util::Numeric::isfloat($val);
 #TODO     }
 #TODO     print "\t".$val;
+    print("\t".join([cols_name[c] for c in cols_order]))
+    p = base_total[args.baseCurrency]
+    print("\t".join([fmt.format(p[c]) if isinstance(p[c], numbers.Number) else p[c] for c in cols_order]))
 
 
 # close DB
