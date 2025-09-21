@@ -358,7 +358,7 @@ if args.baseCurrency is not None:
 
     # Add cash and stock balances together
     for s in currencies:
-        if s not in totals[s]: continue
+        if s not in totals: continue
         cols = ['nav', 'dividend', 'investment', 'sell_gain']
         for c in cols:
             props[s][c] += totals[s][c]
@@ -372,6 +372,15 @@ if args.baseCurrency is not None:
             base_total[args.baseCurrency][c] += props[s][c] * fx_rates[s]
 
     # Calculate gain figures
+    #TODO (21-Sep-2025): Need to double check (through unit test) if the following comps are
+    #     right. Dividends are alreasy part of the cash balance, hence included in `investment`
+    #     (as cash on hand) or `nav` (as reinvested capital). It seems that for `unreal_gain`
+    #     the dividends would cancel out through the ddifference of `nav` and `investment`;
+    #     the concern is should they not cancel, then the `real_gain` would cause double
+    #     counting. Similar reasoning applies to `sell_gain`.
+    #     Hence the action here is to create a unit test to test the comps yield the correct
+    #     sums. To implement such unit test, the "performance" collections should aggregate
+    #     into a class instance that would let query (and test) the computed values.
     base_total[args.baseCurrency]['real_gain'] = base_total[args.baseCurrency]['sell_gain'] + base_total[args.baseCurrency]['dividend']
     base_total[args.baseCurrency]['unreal_gain'] = base_total[args.baseCurrency]['nav'] - base_total[args.baseCurrency]['investment']
     base_total[args.baseCurrency]['total_gain'] = base_total[args.baseCurrency]['unreal_gain'] + base_total[args.baseCurrency]['real_gain']
@@ -380,14 +389,7 @@ if args.baseCurrency is not None:
     else:
         base_total[args.baseCurrency]['total_gain_percent'] =  base_total[args.baseCurrency]['total_gain']*100/base_total[args.baseCurrency]['total_investment']
 
-#TODO # Print results
-#TODO foreach my $c (@cols_order) {
-#TODO     my $val = '???';
-#TODO     if (exists($base_total{$base}->{$c})) {
-#TODO        $val = $base_total{$base}->{$c};
-#TODO        $val = sprintf("%.".$np."f", $val) if Scalar::Util::Numeric::isfloat($val);
-#TODO     }
-#TODO     print "\t".$val;
+    # Print results
     print("\t".join([cols_name[c] for c in cols_order]))
     p = base_total[args.baseCurrency]
     print("\t".join([fmt.format(p[c]) if isinstance(p[c], numbers.Number) else p[c] for c in cols_order]))
